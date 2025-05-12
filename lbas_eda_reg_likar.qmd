@@ -1,0 +1,39 @@
+---
+title: "Long Beach Animal Shelter - EDA"
+author: "Miha Likar"
+format: html
+editor: visual
+---
+
+# Introduction
+
+In this report, I'll present exploratory data analysis of Long Beach Animal Shelter dataset. Additionally, throughtout the EDA, I will formulate specific research question(s) which will be addressed in the regression models section. 
+
+The workflow and structure of this report is as follows:
+
+- Brief introduction about the dataset and available variables
+- Explore distributions of various single variables
+- Explore associations between 2 and/or more variables
+- Impute certain variables based on the available data (age, reproductive status)
+- Clearly formulate RQ and Hs
+- Regression analysis (model comparison)
+
+
+
+
+
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+1 + 1
+```
+
+You can add options to executable code like this
+
+```{r}
+#| echo: false
+2 * 2
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
