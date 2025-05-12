@@ -5,35 +5,631 @@ format: html
 editor: visual
 ---
 
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(scales)
+```
+
 # Introduction
 
-In this report, I'll present exploratory data analysis of Long Beach Animal Shelter dataset. Additionally, throughtout the EDA, I will formulate specific research question(s) which will be addressed in the regression models section. 
+In this report, I'll present exploratory data analysis of Long Beach Animal Shelter dataset. Additionally, throughout the EDA, I will formulate specific research question(s) which will be addressed in the regression models section.
 
 The workflow and structure of this report is as follows:
 
-- Brief introduction about the dataset and available variables
-- Explore distributions of various single variables
-- Explore associations between 2 and/or more variables
-- Impute certain variables based on the available data (age, reproductive status)
-- Clearly formulate RQ and Hs
-- Regression analysis (model comparison)
+-   Brief introduction about the dataset and available variables
+-   Explore distributions of various single variables
+-   Explore associations between 2 and/or more variables
+-   Impute certain variables based on the available data (age, reproductive status)
+-   Clearly formulate RQ and Hs
+-   Regression analysis (model comparison)
 
+# Exploratory data analysis (EDA)
 
+## Reading the dataset
 
-
-
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
-```{r}
-1 + 1
-```
-
-You can add options to executable code like this
+Read the data from an online source - TidyTuesday GitHub page.
 
 ```{r}
-#| echo: false
-2 * 2
+longbeach_raw <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-03-04/longbeach.csv')
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+Let's look at the dataset, to see what we are working with.
+
+```{r}
+glimpse(longbeach_raw)
+```
+
+There are several variables that already stand out as variables we want to primarily focus on in our EDA. These are:
+
+-   `animal_type`
+-   `sex`
+-   `dob` + `intake_date`
+-   `intake_condition`
+-   `intake_type`
+-   `outcome_date`
+-   `outcome_type`
+
+Before we proceed, let's factorize all the character variables. If we realize we need some of them in the numeric or character format later on, we can change this afterwards.
+
+```{r}
+longbeach <- longbeach_raw %>% mutate(across(where(is.character), as.factor))
+```
+
+Ok let's look at the summary, get the basic idea of levels of categorical variables etc.
+
+```{r}
+summary(longbeach)
+```
+
+**Looking at the data, I notice a few things, that I should do, focus on:**
+
+-   `animal_type`: lump, investigate distribution.
+-   `sex`: we can use this variable to infer both sex of the animal and "reproductive state" - whether animal was neutered/spayed, or it animal's reproductive functioning is intact. Ivestigate distribution.
+-   Use `dob` (date of birth) and `intake_date` to compute age at intake. This might be useful for modeling later on, but initially look at the distribution.
+-   Investigate `intake_condition`. Probably categories will need lumping. Explore distribution.
+-   Investigate `intake_type`. Probably categories will need lumping. Explore distribution.
+-   Investigate `outcome_type`. Probably categories will need lumping. Explore distribution. Group the general types into *positive outcomes* and *negative outcomes* (will be discussed in more details later) and *adoption rate*, based on adopted vs. all other outcome types.
+
+## Exploring distributions of variables of interest
+
+### Animal type
+
+Let's first check the levels of the variable `animal_type` and their count, and consider possible lumping strategies.
+
+```{r}
+longbeach %>%
+  count(animal_type)
+```
+
+While it is possible that we would use lumping immediately to identify the most frequent animal types (either by fixed number of levels or proportion of the level vs. total count), we can also merge them manually based on reasoning and supporting *literature*.
+
+It was reasonable to expect that cats and dogs will be the most prevalent categories. They are followed by birds. Category wild follows and category other is tightly behind. It seems legitimate to keep these levels as they are at this point. Rabbits and guinea pigs could be collapsed into category "Small mammals". Reptiles and amphibians could be collapsed into "Exotic", a type frequently used by shelters, pet stores etc. Livestock can definitely be merged with other, considering the group size of the livestock.
+
+```{r}
+longbeach <- longbeach %>%
+  mutate(animal_type = fct_collapse(animal_type,
+                                   Dogs = "dog",
+                                   Cats = "cat",
+                                   Birds = "bird",
+                                   Wildlife = "wild",
+                                   `Small mammals` = c("rabbit", "guinea pig"),
+                                   Exotic = c("reptile","amphibian"),
+                                   Other = c("other", "livestock")))
+
+```
+
+These are the categories that we will work with throughout EDA. I can anticipate that perhaps only dogs and cats will be features in the regression models due to significant discrepancy in sub-sample size of these two categories, compared to smaller ones such as birds, wildlife etc. Dataset documentation does not provide precise information about the group "Other". It is possible that various different species are included in this type.
+
+```{r}
+longbeach %>% 
+  count(animal_type, sort = TRUE)
+```
+
+We can use this variable for some basic distribution/count visualisation now.
+
+```{r}
+library(jcolors)
+library(paletteer)
+library(ggpomological)
+
+longbeach %>% 
+  count(animal_type) %>%
+  mutate(animal_type = fct_reorder(animal_type, n)) %>% 
+  ggplot(aes(x = animal_type, y = n, fill = animal_type)) + 
+  geom_col() + 
+  theme_minimal() + 
+  coord_flip() + 
+  labs(x = NULL, y = "Number of animals", title = "Number of animals taken in by animal type (Long Beach Animal Shelter, 2017–2024)", caption = "Small mammals include rabbits and guneia pigs. Exotic includes reptiles and amphibians.", fill = "Animal type") + 
+  scale_y_continuous(breaks = seq(0,15000,2500)) + 
+  #scale_fill_brewer(palette = "Spectral", guide = guide_legend(reverse = TRUE)) +
+  #scale_fill_dutchmasters(palette = "milkmaid") + 
+  #scale_fill_pomological() + 
+  #scale_fill_paletteer_d("PrettyCols::Autumn") +
+  #scale_fill_jcolors(palette = "pal7") + 
+  scale_fill_paletteer_d("ggthemes::Tableau_10") +
+  theme(plot.title.position = "plot",
+        plot.caption = element_text(hjust = -0.5),
+        legend.position="none")
+# Consider removing the legend
+
+```
+
+We can play around a little bit and try so called "lollipop" visualization, as it has been said to be a more modern, appealing version of bar charts.
+
+```{r}
+longbeach %>% 
+  count(animal_type) %>%
+  mutate(animal_type = fct_reorder(animal_type, n)) %>%
+  ggplot(aes(x = n, y = animal_type)) + 
+  geom_segment(aes(x = 0, xend = n, yend = animal_type, color = animal_type), linewidth = 3) +
+  geom_point(aes(color = animal_type), size = 10) +
+  geom_text(aes(label = n), color = "#313131", size = 2.5) + 
+  labs(y = NULL, x = "Number of animals", title = "Number of animals taken in by animal type (Long Beach Animal Shelter, 2017–2024)", caption = "Small mammals include rabbits and guneia pigs. Exotic includes reptiles and amphibians.", fill = "Animal type") + 
+  scale_x_continuous(breaks = seq(0,15000,2500)) + 
+  theme_minimal() +
+  theme(plot.title.position = "plot",
+        plot.caption = element_text(hjust = -0.5),
+        legend.position="none") + 
+  scale_color_paletteer_d("ggthemes::Tableau_10")
+```
+
+I want to play around with different visualizations a bit and thought that while bar chart might be very simple to read and informative for both an advanced as well as lay reader, I can try out treemaps.
+
+```{r}
+library(treemapify)
+
+longbeach %>%
+  count(animal_type) %>%
+  mutate(label_size = rescale(n, to = c(8, 60))) %>%  # scale size between 3 and 8
+  ggplot(aes(area = n, fill = animal_type, label = paste0(animal_type, "\n", n))) +
+  geom_treemap() +
+  geom_treemap_text(aes(size = label_size), colour = "#474747", place = "centre", grow = FALSE) +
+  scale_size_identity() +
+  scale_fill_paletteer_d("ggthemes::Tableau_10") + 
+  labs(title = "Number of animals taken in by animal type \n(Long Beach Animal Shelter, 2017–2024)", subtitle = "Area of each type represents proportion of the total intake.", caption = "Small mammals include rabbits and guneia pigs. Exotic includes reptiles and amphibians.") +
+  theme_minimal() + 
+  theme(plot.title.position = "plot",
+        plot.caption = element_text(hjust = 0.05),
+        legend.position="none") +
+  coord_fixed(1)
+```
+
+Fine for now. We can always return to these graphs and polish the appearance. We can now apply the same logic to investigate other variables!
+
+###Intake condition
+
+Let's first check the levels of the variable `intake_condition` and their count, and consider possible lumping strategies.
+
+```{r}
+longbeach %>%
+  count(intake_condition, sort = TRUE)
+```
+
+Huh, alright, there are 17 different conditions. It appears that we could collapse illness and injury together in "physical condition". Let's explore lumping a bit, with fixed number of categories and proportions of total sample.
+
+```{r}
+#Fixed number of categories
+longbeach %>%
+  mutate(intake_condition = fct_lump(intake_condition, n = 10)) %>%
+  count(intake_condition, sort = TRUE)
+
+#Number of categories based on proportions
+longbeach %>%
+  mutate(intake_condition = fct_lump(intake_condition, prop = .03)) %>%
+  count(intake_condition, sort = TRUE)
+```
+
+**Based on category inspection I decided the following:**
+
+-   merge illness and injury in "physical" category
+-   I am also considering joining with behavioral (mild, moderate, severe) or collapsing these categories into "other" as the number of observations is really small
+-   There seem to be some specific smaller categories (aged, welfare seizures etc.), which will be collapsed into "other".
+
+We need to collapse the categories manually.
+
+```{r}
+longbeach <- longbeach %>% 
+  mutate(intake_condition = fct_lump(intake_condition, 10)) %>%
+  mutate(intake_condition = fct_collapse(intake_condition,
+                                         Normal = "normal",
+                                         `Mild physical` = c("ill mild", "injured  mild"),
+                                         `Moderate physical` = c("ill moderatete", "injured  moderate"),
+                                         `Severe physical` = c("ill severe", "injured  severe"),
+                                         `Under age/weight` = "under age/weight",,
+                                         other_level = "Other"))
+
+longbeach %>% 
+  count(intake_condition, sort = TRUE)
+```
+
+First, I will specify colors associated with each category, so they remain the same throughout visualisations.
+
+```{r}
+intake_colors <- c(
+  "Normal" = "#77b7b2",
+  "Mild physical" = "#ebcb2a",
+  "Moderate physical" = "#f28d2b",
+  "Severe physical" = "#e15859",
+  "Under age/weight" = "#c8868d",
+  "Other" = "#cbc8c5"
+)
+```
+
+Let's now use same visualizations as before for `animal_type` to plot distribution of `intake_condition`.
+
+```{r}
+longbeach %>% 
+  count(intake_condition) %>%
+  mutate(intake_condition = fct_reorder(intake_condition, n)) %>% 
+  ggplot(aes(x = intake_condition, y = n, fill = intake_condition)) + 
+  geom_col() + 
+  theme_minimal() + 
+  coord_flip() + 
+  labs(x = "Intake condition", y = "Number of animals", title = "Number of animals taken in, by intake condition \n(Long Beach Animal Shelter, 2017–2024)", caption = "Physical conditions include illnesses and injuries.", fill = "Intake condition") + 
+  scale_y_continuous(breaks = seq(0,15000,2500)) + 
+  scale_fill_manual(values = intake_colors) +
+  theme(plot.title.position = "plot",
+        plot.caption = element_text(hjust = -0.3),
+        legend.position="none")
+# Consider removing the legend
+
+```
+
+We can play around a little bit and try so called "lollipop" visualization, as it has been said to be a more modern, appealing version of bar charts.
+
+```{r}
+longbeach %>% 
+  count(intake_condition) %>%
+  mutate(intake_condition = fct_reorder(intake_condition, n)) %>%
+  ggplot(aes(x = n, y = intake_condition)) + 
+  geom_segment(aes(x = 0, xend = n, yend = intake_condition, color = intake_condition), linewidth = 4) +
+  geom_point(aes(color = intake_condition), size = 11) +
+  geom_text(aes(label = n), color = "#313131",  size = 2.5) + 
+  labs(y = NULL, x = "Number of animals", title = "Number of animals taken in, by intake condition \n(Long Beach Animal Shelter, 2017–2024)", caption = "Physical conditions include illnesses and injuries.", fill = "Animal type") + 
+  scale_x_continuous(breaks = seq(0,15000,5000)) + 
+  theme_minimal() +
+  theme(plot.title.position = "plot",
+        plot.caption = element_text(hjust = -0.3),
+        legend.position="none") + 
+  scale_color_manual(values = intake_colors)
+```
+
+I want to play around with different visualizations a bit and thought that while bar chart might be very simple to read and informative for both an advanced as well as lay reader, I can try out treemaps.
+
+```{r}
+library(treemapify)
+
+longbeach %>%
+  count(intake_condition) %>%
+  mutate(label_size = rescale(n, to = c(10, 40))) %>%  # scale size between 3 and 8
+  ggplot(aes(area = n, fill = intake_condition, label = paste0(intake_condition, "\n", n))) +
+  geom_treemap() +
+  geom_treemap_text(aes(size = label_size), colour = "#474747", place = "centre", grow = FALSE) +
+  scale_size_identity() +
+  scale_fill_manual(values = intake_colors) + 
+  labs(title = "Number of animals taken in, by intake condition \n(Long Beach Animal Shelter, 2017–2024)", subtitle = "Area of each intake condition represents proportion of the total intake.", caption = "Physical conditions include illnesses and injuries.") +
+  theme_minimal() + 
+  theme(plot.title.position = "plot",
+        plot.caption = element_text(hjust = 0.05),
+        legend.position="none") +
+  coord_fixed(1)
+```
+
+From these plots we can see that the majority of the animals taken into the Long Beach Animal Shelter are in normal physical condition. About half less is animals that are under age or under weight. This is roughly compared to all three categories of hindered physical condition combined \~ mild, moderate, severe. *At this point I start thinking that intake condition might be an interesting predictor in the regression models. At this point we can plot `animal_type` and `intake_condition` together and explore in what conditions are different animals usually taken into the shelter.*
+
+
+
+#### Combining animal type and condition
+
+For each type of animal, what number/proportion of them arrived in each intake condition?
+
+```{r}
+longbeach %>% 
+  mutate(animal_type = fct_relevel(animal_type, "Other", "Wildlife", "Exotic", "Small mammals", "Birds", "Dogs", "Cats")) %>% 
+  mutate(intake_condition = fct_relevel(
+  intake_condition,
+  "Other",
+  "Severe physical",
+  "Moderate physical",
+  "Mild physical",
+  "Under age/weight",
+  "Normal")) %>%
+  ggplot(aes(x = animal_type, fill = intake_condition)) + 
+  geom_bar() + 
+  theme_minimal() + 
+  labs(x = "Animal type", 
+       y = "Number of animals",
+       title = "Number of animals with different intake conditions for each animal type \n(Long Beach Animal Shelter, 2017–2024)",
+       fill = "Intake condition") + 
+  scale_fill_manual(values = intake_colors, guide = guide_legend(reverse = TRUE))
+```
+
+While this visualization is informative about absolute number of observations of each intake condition for different animal types. We again see that cats, followed by dogs dominate in overall number of intakes. Interesting observation is that there is quite a large proportion of cats taken in under-aged or under-weight condition. Majority of dogs on the other hand appear to be accepted in normal condition. It might also be good to visualize proportions within each group, to get an insight into more specific between-animal type differences, that might remain hidden in column-plotting with huge number of observations between the groups.
+
+```{r}
+longbeach %>% 
+  filter(animal_type != "livestock") %>% 
+  mutate(animal_type = fct_relevel(animal_type, "Other", "Wildlife", "Exotic", "Small mammals", "Birds", "Dogs", "Cats")) %>% 
+  mutate(intake_condition = fct_relevel(
+  intake_condition,
+  "Severe physical",
+  "Moderate physical",
+  "Mild physical",
+  "Other",
+  "Under age/weight",
+  "Normal")) %>%
+  ggplot(aes(x = animal_type, fill = intake_condition)) + 
+  geom_bar(position = "fill") + 
+  theme_minimal() + 
+  labs(x = "Animal type", 
+       y = "Proportion of the specific intake condition (%)",
+       title = "Proportion of specific intake condition for each animal type \n(Long Beach Animal Shelter, 2017–2024)",
+       fill = "Intake condition") + 
+  coord_flip() + 
+  scale_y_continuous(
+  labels = label_percent(), 
+  breaks = seq(0, 1, 0.2)) + 
+  scale_fill_manual(values = intake_colors, guide = guide_legend(reverse = TRUE))
+```
+
+OK, let's try a slightly different approach and tweak the plot by adding percentage scale on both side of the axis, order animal types based on percentage of normal intake condition etc.
+
+```{r}
+# Let's first pull the order of the names by proportion of normal intake condition - I tried doing it in the same pipeline, but it does not work
+
+animal_order <- longbeach %>%
+  count(animal_type, intake_condition) %>%
+  group_by(animal_type) %>%
+  mutate(type_n = sum(n),
+         p = n / sum(n),
+         animal_type_lab = paste0(animal_type, " (", type_n, ")")) %>%
+  filter(intake_condition == "Normal") %>%
+  arrange(p) %>%
+  pull(animal_type_lab)
+
+
+
+longbeach %>% 
+  count(animal_type, intake_condition) %>%
+  group_by(animal_type) %>%
+  mutate(type_n = sum(n)) %>%
+  ungroup() %>%
+  mutate(animal_type_lab = paste0(animal_type, " (", type_n, ")"),
+         animal_type_lab = factor(animal_type_lab, levels = animal_order),
+         intake_condition = fct_relevel(intake_condition,
+                                        "Severe physical",
+                                        "Moderate physical",
+                                        "Mild physical",
+                                        "Other",
+                                        "Under age/weight",
+                                        "Normal")) %>%
+  ggplot(aes(x = animal_type_lab, y = n, fill = intake_condition)) + 
+  geom_col(position = "fill") + 
+  theme_minimal() + 
+  labs(x = "Animal type", 
+       y = "Proportion of the specific intake condition (%)",
+       title = "Proportion of specific intake condition for each animal type \n(Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers next to the animal types represent number of individuals from that group.",
+       fill = "Intake condition") + 
+  coord_flip() + 
+  scale_y_continuous(
+  labels = label_percent(), 
+  breaks = seq(0, 1, 0.2),
+  sec.axis = dup_axis(labels = label_percent(), name = NULL)) + 
+  scale_fill_manual(values = intake_colors, guide = guide_legend(reverse = TRUE))
+```
+
+Considering this visualisation, there are few things we can think about:
+
+- It seems that exotic animals and small mammals usually arrive/are accepted in normal condition. Possibly as they might escape from home for a short while and are registered into the system upon arrival, however owners potentially pick them up soon. Thus these are not animals that would linger the streets for a long time.
+- Dogs are admitted to the shelter in normal condition much more frequently compared to cats.
+- However, cats have really high proportion of under-aged or under-weight intakes. It is possible, that stray cats give birth prematurely more often compared to dogs. On the other hand, it is possible that survival on the streets is the hardest for cats, thus leaving a lot of members of the stray cat community under-fed and under-weight. 
+- Birds and wildlife have high proportion of (severe) physical conditions. Perhaps a lot of members of these groups arrive to the shelter because of the injury in the first place. It is possible that wild animals roam into urban environment or that birds have all sorts of accidents and are then injured brought to the shelter by members of the community or taken in by members of the shelter. 
+
+
+### Intake type
+
+Based on the points raised in the end of the previous section, we can consider looking into `intake_type` variable.
+```{r}
+longbeach %>% 
+  count(intake_type, sort = TRUE)
+```
+
+Majority of the animals are either stray or come from wildlife, and a noticeable proportion of animals being surrendered by the owner. Due to highly unbalanced groups, I will not explore this variable for now, will just check the count for each type of intake for different types of animals and visualize it. 
+```{r}
+longbeach %>%
+  count(animal_type, intake_type) %>%
+  mutate(animal_type = fct_relevel(animal_type,
+                                   "Cats", "Dogs", "Small mammals", "Exotic")) %>%
+  ggplot() + 
+  aes(animal_type, n, fill = intake_type) %>%
+  geom_col(position = "fill") + 
+  #geom_col() + 
+  theme_minimal() + 
+  labs(y = "Number of animals", x = "Animal type", fill = "Intake type", title = "Proportion of animals by different intake types for each type of animal \n(Long Beach Animal Shelter, 2017–2024)") + 
+  scale_fill_paletteer_d("ggthemes::Classic_Green_Orange_12")
+```
+Majority of dogs and cats in particular are stray animals and a noticeable percentage of animals in those groups coming by owner's surrender. Birds, wildlife and other species are predominantly found in wild life, and presumably injured or ill, as discussed in the end of the previous section. 
+
+
+### Sex
+
+Let's now proceed with the `sex` variable. During initial data inspection, I noticed that there are not only sex information, but also whether animal was neutered/spayed and is thus not sexually active/capable of reproduction anymore. As I am still seriously considering modeling adoption rate in regression models, this information might be valuable. Let's first look into the variable, mutate it and visualize. 
+```{r}
+longbeach %>%
+  count(sex)
+```
+
+OK, I will leave category Unknown as it is. Then, I will split the original `sex` variable into two, one about sex and one about reproductive state. From the meaning of the words, we can infer then when the condition is "Neutered" it refers to the male, and when the condition is "Spayed", it refers to the females. After looking into online forum discussion and consulting various AIs, I concluded that when reproductive status is listed, we can infer the sex. When it is not, we can conclude that the reproductive state is intact and biological sex is listed. 
+
+Based on this I will create binary variable `starilised`, which will be 1 if current `sex` is "Spayed" or "Neutered" and 0 if biological sex is listed. I will recode values in the original `sex` category to only include information about biological sex.
+```{r}
+longbeach <- longbeach %>%
+  mutate(sterilised = case_when(sex %in% c("Spayed", "Neutered") ~ "Yes",
+                                sex %in% c("Male", "Female") ~ "No",
+                                sex == "Unknown" ~ "Unknown"),
+         sex = case_when(sex %in% c("Spayed", "Female") ~ "Female",
+                                sex %in% c("Male", "Neutered") ~ "Male",
+                                sex == "Unknown" ~ "Unknown"))
+longbeach %>%
+  count(sex, sterilised) %>%
+  ggplot() +
+  aes(sex, n, fill = sterilised) + 
+  geom_col(position = "dodge") +
+  #geom_col(position = "fill") + 
+  labs(x = "Sex", y = "Number of animals", fill = "Sterilised", title = "NUmber of sterilised and unstarilised animals by sex \n(Long Beach Animal Shelter, 2017–2024)") + 
+  theme_minimal() + 
+  scale_fill_pomological() 
+```
+```{r}
+longbeach %>%
+  count(sex, sterilised)
+```
+
+Using the proportion graph, we can see that approximately equal proportion (~43%) of both biological sexes is sterilized. From the count/column graph, we can see that males are more frequently taken in at the animal shelter. 6352 animals have unknown sex and/or sterilization status. 
+
+At this point we could plot `sex` and `sterilisation` in assocation with previously handled variables - `intake_condition` and `animal_type`. I will select only one at this point and then mode on to other variables. I choose `animal_type` to see whether animals, especially the most frequent ones, differ in their sterilization rate and sex. I will focus on proportions, as we have clearly established thus far that dogs and cats are by far the most dominant animal types and visualization of other types besides them is much more informative in proportions.
+```{r}
+longbeach %>%
+  count(animal_type, sex) %>%
+  ggplot() + 
+  aes(animal_type, n, fill = sex) %>%
+  geom_col(position = "fill") + 
+  #geom_col() + 
+  theme_minimal() + 
+  labs(y = "Proportion of animals", x = "Animal type", fill = "Sex", title = "Proportion of different sexes for each type of animal \n(Long Beach Animal Shelter, 2017–2024)") + 
+  scale_fill_pomological()
+```
+
+We can see that in exotic animals, birds, wildlife and others, very high proportion of those groups have unknown sex. It seems reasonable to assume that this could happen due to accurate genitalia identification is much more difficult to do in these groups, compared to cats, dogs and small mammals. In those groups, male and female sex appear to be approximately balanced. About 10% of cats and small mammals have unknown sex. About 60% of dogs are males and the rest are mostly females and unknown representatives in very small percentage.
+
+
+Let's look at `sterilised`.
+```{r}
+longbeach %>%
+  count(animal_type, sterilised) %>%
+  ggplot() + 
+  aes(animal_type, n, fill = sterilised) %>%
+  geom_col(position = "fill") + 
+  #geom_col() + 
+  theme_minimal() + 
+  labs(y = "Proportion of animals", x = "Animal type", fill = "Sterilised", title = "Proportion of sterilised individuals for each type of animal \n(Long Beach Animal Shelter, 2017–2024)") +
+  scale_fill_pomological()
+```
+
+High percentage of individuals with unknown sterilization status in exotic, birds, wildlife and other could be expected. We have seen in previous analysis that a noticeable proportion of those animals are wild animals, thus there is probably no record kept about their sterilization status. Additionally, as mentioned before identification of genitalia and related markers is much more difficult in these species. For cats, dogs and small mammals, sterilization rate is around 40-50%. We can infer some information from this. 
+
+If animals have already been taken to a shelter before, they were most likely sterilized, as this is a standard procedure during the capture and stay. While approximately a half of the animals therefore seem to have been captured before, or surrendered/escaped by/from the owner, who put them through the procedure, about the half of these animals have not been sterilized, implying this is their first time in the shelter and are arguably very young. I could explore this further by creating tile plots with `intake_type` and count on axes, and `sterilisation` as fill, faceted for animal types. It would also be possible to perform statistical tests (chi-square) to investigate whether there are significant differences in sterilized vs. unsterilized individuals among different intake or animal types. 
+
+
+
+
+```{r}
+summary(longbeach)
+```
+
+*in case data is overwritten, copy here*
+```{r}
+#longbeach_after_sex <- longbeach
+#longbeach <- longbeach_after_sex
+```
+
+### Outcome type
+
+I will proceed to the next variable, `outcome_type`. Let's see what are the levels of the variable and how we could collapse, lump them.
+
+
+I decide for keeping all the outcomes that are at least 2.5% of the complete sample and lump others. in case of condition "shelter, neuter, return" I am not completely sure what it means as different webpages have different interpretations depending on the context. I will therefore collapse this category with "others".
+```{r}
+longbeach <- longbeach %>% 
+  mutate(outcome_type = fct_lump(outcome_type,  prop = .025)) %>%
+  mutate(outcome_type = fct_collapse(outcome_type,
+                                     Adoption = "adoption",
+                                     Rescue = "rescue",
+                                     `Return to owner` = "return to owner",
+                                     Euthanasia = "euthanasia",
+                                     Died = "died",
+                                     Transfer = "transfer",
+                                     other_level = "Other"))
+                                     
+
+longbeach %>%
+  count(outcome_type, sort = TRUE)
+```
+
+Let's now create a column `adopted`. It will be "Yes" in case of outcome type "adoption" and "No" for all the other outcome types.
+```{r}
+longbeach <- longbeach %>%
+  filter(!is.na(outcome_type)) %>%
+  mutate(adopted = ifelse(outcome_type == "Adoption", 1, 0)) %>%
+  mutate(adopted = factor(adopted, levels = c(1, 0), labels = c("Yes", "No")))
+
+longbeach <- longbeach %>%
+  relocate(adopted, .after = "outcome_type")
+```
+
+Let's also create a binary + other category `outcome_type_posneg` where we will collapse `outcome_type` into positive if animal survived, negative if it did not and other for other level(s).
+```{r}
+longbeach %>% 
+  count(outcome_type)
+
+longbeach <- longbeach %>%
+  mutate(outcome_type_posneg = fct_collapse(outcome_type,
+                                     Positive = c("Adoption", "Rescue", "Return to owner", "Transfer"),
+                                     Negative = c("Died", "Euthanasia"),
+                                     other_level = "Other"))
+
+longbeach %>%
+  mutate(diff = (outcome_type_posneg == "Positive") != was_outcome_alive) %>%
+  filter(diff) %>%
+  count(outcome_type, was_outcome_alive)
+```
+
+There was a discrepancy in number of my "positive outcomes" and original "alive" outcome in variable `was_outcome_alive.` I checked what are outcome types in my active dataset that are alive, but are not "positive" in newly created `outcome_type_posneg` column. All of them are in "other" outcome type. Maybe we can filter out others in future visualization and analysis.
+
+
+OK! Let's finally proceed to plotting `outcome_type` distribution. 
+
+```{r}
+outcome_type_posneg_colors <- c(
+  "Positive" = "#77b7b2",
+  "Negative" = "#e15859",
+  "Other" = "#ebcb2a")
+
+longbeach %>% 
+  group_by(outcome_type) %>%
+  summarise(n = n(),
+            outcome_type_posneg = first(outcome_type_posneg)) %>%
+  mutate(outcome_type = fct_reorder(outcome_type, n)) %>% 
+  ggplot(aes(x = outcome_type, y = n, fill = outcome_type_posneg)) + 
+  geom_col() + 
+  theme_minimal() + 
+  coord_flip() + 
+  labs(x = "Outcome type", y = "Number of animals", title = "Number of animals by outcome type (Long Beach Animal Shelter, 2017–2024)", fill = "Outcome type") + 
+  #scale_y_continuous(breaks = seq(0,15000,2500)) + 
+  #scale_fill_brewer(palette = "Spectral", guide = guide_legend(reverse = TRUE)) +
+  #scale_fill_dutchmasters(palette = "milkmaid") + 
+  #scale_fill_pomological() + 
+  #scale_fill_paletteer_d("PrettyCols::Autumn") +
+  scale_fill_manual(values = outcome_type_posneg_colors) +
+  theme(plot.title.position = "plot",
+        plot.caption = element_text(hjust = -0.3),
+        legend.position="none")
+# Consider removing the legend
+```
+
+This could be a nice lollipop plot!
+```{r}
+longbeach %>% 
+  group_by(outcome_type) %>%
+  summarise(n = n(),
+            outcome_type_posneg = first(outcome_type_posneg)) %>%
+  mutate(
+    proportion = n / sum(n),  
+    label = scales::percent(proportion, accuracy = 0.1),
+    outcome_type = fct_reorder(outcome_type, n) 
+  ) %>% 
+  ggplot(aes(x = n, y = outcome_type)) + 
+  geom_segment(aes(x = 0, xend = n, yend = outcome_type, color = outcome_type_posneg), linewidth = 5) +
+  geom_point(aes(color = outcome_type_posneg), size = 13) +
+  geom_text(aes(label = label), color = "#313131", size = 3, fontface = "bold") +
+  labs(
+    y = NULL, x = "Number of animals",
+    title = "Proportion of animals by outcome type (Long Beach Animal Shelter, 2017–2024)",
+    subtitle = "Outcomes with animal remaining alive and considered positive in green.\nNegative outcomes with animals dying in red.",
+    color = "Outcome type",
+    caption = "\n2333 individuals in group 'other' were originally considered as living outcome. \nHowever after our recoding they were recoded to neither positive nor negative outcome"
+  ) + 
+  xlim(0, 7100) + 
+  theme_minimal() +
+  theme(
+    plot.title.position = "plot",
+    plot.caption = element_text(hjust = 0),
+    legend.position = "none"
+  ) + 
+  scale_color_manual(values = outcome_type_posneg_colors)
+```
+
+
+
+
