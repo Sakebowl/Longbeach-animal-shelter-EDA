@@ -3,6 +3,8 @@ title: "Long Beach Animal Shelter - EDA"
 author: "Miha Likar"
 format: html
 editor: visual
+editor_options: 
+  chunk_output_type: inline
 ---
 
 ```{r}
@@ -11,6 +13,7 @@ library(ggplot2)
 library(scales)
 library(paletteer)
 library(treemapify)
+library(knitr)
 ```
 
 # Introduction
@@ -300,8 +303,6 @@ longbeach %>%
 
 From these plots we can see that the majority of the animals taken into the Long Beach Animal Shelter are in normal physical condition. About half less is animals that are under age or under weight. This is roughly compared to all three categories of hindered physical condition combined \~ mild, moderate, severe. *At this point I start thinking that intake condition might be an interesting predictor in the regression models. At this point we can plot `animal_type` and `intake_condition` together and explore in what conditions are different animals usually taken into the shelter.*
 
-
-
 #### Combining animal type and intake condition
 
 For each type of animal, what number/proportion of them arrived in each intake condition?
@@ -403,21 +404,22 @@ longbeach %>%
 
 Considering this visualisation, there are few things we can think about:
 
-- It seems that exotic animals and small mammals usually arrive/are accepted in normal condition. Possibly as they might escape from home for a short while and are registered into the system upon arrival, however owners potentially pick them up soon. Thus these are not animals that would linger the streets for a long time.
-- Dogs are admitted to the shelter in normal condition much more frequently compared to cats.
-- However, cats have really high proportion of under-aged or under-weight intakes. It is possible, that stray cats give birth prematurely more often compared to dogs. On the other hand, it is possible that survival on the streets is the hardest for cats, thus leaving a lot of members of the stray cat community under-fed and under-weight. 
-- Birds and wildlife have high proportion of (severe) physical conditions. Perhaps a lot of members of these groups arrive to the shelter because of the injury in the first place. It is possible that wild animals roam into urban environment or that birds have all sorts of accidents and are then injured brought to the shelter by members of the community or taken in by members of the shelter. 
-
+-   It seems that exotic animals and small mammals usually arrive/are accepted in normal condition. Possibly as they might escape from home for a short while and are registered into the system upon arrival, however owners potentially pick them up soon. Thus these are not animals that would linger the streets for a long time.
+-   Dogs are admitted to the shelter in normal condition much more frequently compared to cats.
+-   However, cats have really high proportion of under-aged or under-weight intakes. It is possible, that stray cats give birth prematurely more often compared to dogs. On the other hand, it is possible that survival on the streets is the hardest for cats, thus leaving a lot of members of the stray cat community under-fed and under-weight.
+-   Birds and wildlife have high proportion of (severe) physical conditions. Perhaps a lot of members of these groups arrive to the shelter because of the injury in the first place. It is possible that wild animals roam into urban environment or that birds have all sorts of accidents and are then injured brought to the shelter by members of the community or taken in by members of the shelter.
 
 ### Intake type
 
 Based on the points raised in the end of the previous section, we can consider looking into `intake_type` variable.
+
 ```{r}
 longbeach %>% 
   count(intake_type, sort = TRUE)
 ```
 
-Majority of the animals are either stray or come from wildlife, and a noticeable proportion of animals being surrendered by the owner. Due to highly unbalanced groups, I will not explore this variable for now, will just check the count for each type of intake for different types of animals and visualize it. 
+Majority of the animals are either stray or come from wildlife, and a noticeable proportion of animals being surrendered by the owner. Due to highly unbalanced groups, I will not explore this variable for now, will just check the count for each type of intake for different types of animals and visualize it.
+
 ```{r}
 longbeach %>%
   count(animal_type, intake_type) %>%
@@ -431,20 +433,22 @@ longbeach %>%
   labs(y = "Proportion of animals", x = "Animal type", fill = "Intake type", title = "Proportion of animals by different intake types for each type of animal \n(Long Beach Animal Shelter, 2017–2024)") + 
   scale_fill_paletteer_d("ggthemes::Classic_Green_Orange_12")
 ```
-Majority of dogs and cats in particular are stray animals and a noticeable percentage of animals in those groups coming by owner's surrender. Birds, wildlife and other species are predominantly found in wild life, and presumably injured or ill, as discussed in the end of the previous section. 
 
+Majority of dogs and cats in particular are stray animals and a noticeable percentage of animals in those groups coming by owner's surrender. Birds, wildlife and other species are predominantly found in wild life, and presumably injured or ill, as discussed in the end of the previous section.
 
 ### Sex
 
-Let's now proceed with the `sex` variable. During initial data inspection, I noticed that there are not only sex information, but also whether animal was neutered/spayed and is thus not sexually active/capable of reproduction anymore. As I am still seriously considering modeling adoption rate in regression models, this information might be valuable. Let's first look into the variable, mutate it and visualize. 
+Let's now proceed with the `sex` variable. During initial data inspection, I noticed that there are not only sex information, but also whether animal was neutered/spayed and is thus not sexually active/capable of reproduction anymore. As I am still seriously considering modeling adoption rate in regression models, this information might be valuable. Let's first look into the variable, mutate it and visualize.
+
 ```{r}
 longbeach %>%
   count(sex)
 ```
 
-OK, I will leave category Unknown as it is. Then, I will split the original `sex` variable into two, one about sex and one about reproductive state. From the meaning of the words, we can infer then when the condition is "Neutered" it refers to the male, and when the condition is "Spayed", it refers to the females. After looking into online forum discussion and consulting various AIs, I concluded that when reproductive status is listed, we can infer the sex. When it is not, we can conclude that the reproductive state is intact and biological sex is listed. 
+OK, I will leave category Unknown as it is. Then, I will split the original `sex` variable into two, one about sex and one about reproductive state. From the meaning of the words, we can infer then when the condition is "Neutered" it refers to the male, and when the condition is "Spayed", it refers to the females. After looking into online forum discussion and consulting various AIs, I concluded that when reproductive status is listed, we can infer the sex. When it is not, we can conclude that the reproductive state is intact and biological sex is listed.
 
 Based on this I will create binary variable `starilised`, which will be 1 if current `sex` is "Spayed" or "Neutered" and 0 if biological sex is listed. I will recode values in the original `sex` category to only include information about biological sex.
+
 ```{r}
 longbeach <- longbeach %>%
   mutate(sterilised = case_when(sex %in% c("Spayed", "Neutered") ~ "Yes",
@@ -463,14 +467,16 @@ longbeach %>%
   theme_minimal() + 
   scale_fill_pomological() 
 ```
+
 ```{r}
 longbeach %>%
   count(sex, sterilised)
 ```
 
-Using the proportion graph, we can see that approximately equal proportion (~43%) of both biological sexes is sterilized. From the count/column graph, we can see that males are more frequently taken in at the animal shelter. 6352 animals have unknown sex and/or sterilization status. 
+Using the proportion graph, we can see that approximately equal proportion (\~43%) of both biological sexes is sterilized. From the count/column graph, we can see that males are more frequently taken in at the animal shelter. 6352 animals have unknown sex and/or sterilization status.
 
 At this point we could plot `sex` and `sterilisation` in assocation with previously handled variables - `intake_condition` and `animal_type`. I will select only one at this point and then mode on to other variables. I choose `animal_type` to see whether animals, especially the most frequent ones, differ in their sterilization rate and sex. I will focus on proportions, as we have clearly established thus far that dogs and cats are by far the most dominant animal types and visualization of other types besides them is much more informative in proportions.
+
 ```{r}
 longbeach %>%
   count(animal_type, sex) %>%
@@ -485,8 +491,8 @@ longbeach %>%
 
 We can see that in exotic animals, birds, wildlife and others, very high proportion of those groups have unknown sex. It seems reasonable to assume that this could happen due to accurate genitalia identification is much more difficult to do in these groups, compared to cats, dogs and small mammals. In those groups, male and female sex appear to be approximately balanced. About 10% of cats and small mammals have unknown sex. About 60% of dogs are males and the rest are mostly females and unknown representatives in very small percentage.
 
-
 Let's look at `sterilised`.
+
 ```{r}
 longbeach %>%
   count(animal_type, sterilised) %>%
@@ -499,29 +505,27 @@ longbeach %>%
   scale_fill_pomological()
 ```
 
-High percentage of individuals with unknown sterilization status in exotic, birds, wildlife and other could be expected. We have seen in previous analysis that a noticeable proportion of those animals are wild animals, thus there is probably no record kept about their sterilization status. Additionally, as mentioned before identification of genitalia and related markers is much more difficult in these species. For cats, dogs and small mammals, sterilization rate is around 40-50%. We can infer some information from this. 
+High percentage of individuals with unknown sterilization status in exotic, birds, wildlife and other could be expected. We have seen in previous analysis that a noticeable proportion of those animals are wild animals, thus there is probably no record kept about their sterilization status. Additionally, as mentioned before identification of genitalia and related markers is much more difficult in these species. For cats, dogs and small mammals, sterilization rate is around 40-50%. We can infer some information from this.
 
-If animals have already been taken to a shelter before, they were most likely sterilized, as this is a standard procedure during the capture and stay. While approximately a half of the animals therefore seem to have been captured before, or surrendered/escaped by/from the owner, who put them through the procedure, about the half of these animals have not been sterilized, implying this is their first time in the shelter and are arguably very young. I could explore this further by creating tile plots with `intake_type` and count on axes, and `sterilisation` as fill, faceted for animal types. It would also be possible to perform statistical tests (chi-square) to investigate whether there are significant differences in sterilized vs. unsterilized individuals among different intake or animal types. 
-
-
-
+If animals have already been taken to a shelter before, they were most likely sterilized, as this is a standard procedure during the capture and stay. While approximately a half of the animals therefore seem to have been captured before, or surrendered/escaped by/from the owner, who put them through the procedure, about the half of these animals have not been sterilized, implying this is their first time in the shelter and are arguably very young. I could explore this further by creating tile plots with `intake_type` and count on axes, and `sterilisation` as fill, faceted for animal types. It would also be possible to perform statistical tests (chi-square) to investigate whether there are significant differences in sterilized vs. unsterilized individuals among different intake or animal types.
 
 ```{r}
 summary(longbeach)
 ```
 
 *in case data is overwritten, copy here*
+
 ```{r}
 #longbeach_after_sex <- longbeach
 #longbeach <- longbeach_after_sex
 ```
 
-
-
 ### Outcome type
+
 I will proceed to the next variable, `outcome_type`. Let's see what are the levels of the variable and how we could collapse, lump them.
 
 I decide for keeping all the outcomes that are at least 2.5% of the complete sample and lump others. in case of condition "shelter, neuter, return" I am not completely sure what it means as different webpages have different interpretations depending on the context. I will therefore collapse this category with "others".
+
 ```{r}
 longbeach <- longbeach %>% 
   mutate(outcome_type = fct_lump(outcome_type,  prop = .025)) %>%
@@ -540,6 +544,7 @@ longbeach %>%
 ```
 
 Let's now create a column `adopted`. It will be "Yes" in case of outcome type "adoption" and "No" for all the other outcome types. **At this point, I remove 187 rows from the dataset, as they hame missing values for `outcome_type`.**
+
 ```{r}
 longbeach <- longbeach %>%
   filter(!is.na(outcome_type)) %>%
@@ -551,9 +556,8 @@ longbeach <- longbeach %>%
 ```
 
 Let's also create a binary + other category `outcome_type_posneg` where we will collapse `outcome_type` into positive if animal survived, negative if it did not and other for other level(s).
+
 ```{r}
-longbeach %>% 
-  count(outcome_type_posneg)
 
 longbeach <- longbeach %>%
   mutate(outcome_type_posneg = fct_collapse(outcome_type,
@@ -569,8 +573,7 @@ longbeach %>%
 
 There was a discrepancy in number of my "positive outcomes" and original "alive" outcome in variable `was_outcome_alive.` I checked what are outcome types in my active dataset that are alive, but are not "positive" in newly created `outcome_type_posneg` column. All of them are in "other" outcome type. Maybe we can filter out others in future visualization and analysis.
 
-
-OK! Let's finally proceed to plotting `outcome_type` distribution. 
+OK! Let's finally proceed to plotting `outcome_type` distribution.
 
 ```{r}
 outcome_type_posneg_colors <- c(
@@ -601,6 +604,7 @@ longbeach %>%
 ```
 
 This could be a nice lollipop plot!
+
 ```{r}
 longbeach %>% 
   group_by(outcome_type) %>%
@@ -636,15 +640,16 @@ longbeach %>%
 
 Data allows me to plot more specific associations that I am looking to investigate with regression models. First, we will do three things with broader `outcome_type` variable:
 
-- Visualize animal type vs. outcome type
-- Visualize intake condition vs. outcome type
-- Tile plot - intake condition vs. animal type, values = proportions with positive outcome
+-   Visualize animal type vs. outcome type
+-   Visualize intake condition vs. outcome type
+-   Tile plot - intake condition vs. animal type, values = proportions with positive outcome
 
 Let's get right to it!
 
 #### Animal type vs. outcome type
 
 Let's first determine color scale, that will be used for outcomes in all visualizations equally.
+
 ```{r}
 outcome_type_colors <- c(
   "Adoption" = "#4c9b82",
@@ -656,8 +661,8 @@ outcome_type_colors <- c(
   "Other" = "#acacab")
 ```
 
-
 Animal type vs. outcome type - investigate whether certain animal types are associated with specific outcomes (e.g. cats getting adopted, dogs being transferred etc.)
+
 ```{r}
 longbeach %>%
   count(animal_type, outcome_type) %>%
@@ -686,14 +691,14 @@ longbeach %>%
   scale_fill_manual(values = outcome_type_colors, guide = guide_legend(reverse = TRUE))
 ```
 
-There are a few things we can conclude from this visualization. Small mammals have the highest proportion of adoptions, followed closely by dogs and cats. While a insignificant proportion of cats is returned to the owners, situation is different for dogs. About 30% of dogs are returned to their owner. It is possible that a significant percentage of stray dogs have escaped their home and were roaming free for a while and then returned to their owner. On the other hand it is possible that much lower proportion of stray cats have escaped their home recently, but are actually street-based animals. Overall, proportion of animals euthanized is about 2.5x higher for cats than for dogs. Highest proportion of euthanasia in a specific animal type is in wildlife (~60%) and animals classified as "other"(~50%). We have speculated in the previous chapters that wildlife animals perhaps end up in the shelter more frequently because of their high rate of moderate and severe injuries (50-55% combined; reported in section "Combining animal type and intake condition"). It is possible that if big proportion of these animals cannot get better, be healed, they highly likely end up euthanized instead of returned to natural habitat. 
+There are a few things we can conclude from this visualization. Small mammals have the highest proportion of adoptions, followed closely by dogs and cats. While a insignificant proportion of cats is returned to the owners, situation is different for dogs. About 30% of dogs are returned to their owner. It is possible that a significant percentage of stray dogs have escaped their home and were roaming free for a while and then returned to their owner. On the other hand it is possible that much lower proportion of stray cats have escaped their home recently, but are actually street-based animals. Overall, proportion of animals euthanized is about 2.5x higher for cats than for dogs. Highest proportion of euthanasia in a specific animal type is in wildlife (\~60%) and animals classified as "other"(\~50%). We have speculated in the previous chapters that wildlife animals perhaps end up in the shelter more frequently because of their high rate of moderate and severe injuries (50-55% combined; reported in section "Combining animal type and intake condition"). It is possible that if big proportion of these animals cannot get better, be healed, they highly likely end up euthanized instead of returned to natural habitat.
 
-While positive outcomes (bar segments in green) are about 90% for dogs, 80% for small mammals, 80% for exotic animals, 65% for cats and slightly above 60% for birds, wildlife animals and others are more likely to result in a negative outcome (55% for others, 65% for wildlife). 
-
+While positive outcomes (bar segments in green) are about 90% for dogs, 80% for small mammals, 80% for exotic animals, 65% for cats and slightly above 60% for birds, wildlife animals and others are more likely to result in a negative outcome (55% for others, 65% for wildlife).
 
 #### Intake condition vs. outcome type
 
 I will now repeat the same procedure as in the previous section to invastigate possible associations between intake condition and outcome type. With this, we will be able to get some information whether the condition in which the animal is taken into the shelter can give the caretakers any approximation about the most likely outcome for that animal.
+
 ```{r}
 longbeach %>%
   count(intake_condition, outcome_type) %>%
@@ -727,18 +732,33 @@ longbeach %>%
     plot.caption = element_text(hjust = 0)) +
   scale_fill_manual(values = outcome_type_colors, guide = guide_legend(reverse = TRUE))
 ```
-From this plot we can see that intake condition is associated with the outcome. Almost 90% of animals taken in in normal condition are likely to face a positive outcome, meaning they will stay alive and either get adopted, returned to their owner or be transferred to another rescue or shelter facility. With increase in severity of physical condition, the chances of positive outcome decrease, with about 70% positive outcomes for under-age and/or under-weight animals, and those with mild physical condition. About 55% of animals in moderate physical condition will face a positive outcome and this proportion drops to about 25% for severely injured of ill animals. 
+
+From this plot we can see that intake condition is associated with the outcome. Almost 90% of animals taken in in normal condition are likely to face a positive outcome, meaning they will stay alive and either get adopted, returned to their owner or be transferred to another rescue or shelter facility. With increase in severity of physical condition, the chances of positive outcome decrease, with about 70% positive outcomes for under-age and/or under-weight animals, and those with mild physical condition. About 55% of animals in moderate physical condition will face a positive outcome and this proportion drops to about 25% for severely injured of ill animals.
+
+**NOTE:** Before proceeding, I will remove category "Other" from `animal_type` and `intake_condition`, to avoid repeating it within every pipeline. 
+
+```{r}
+# In case copy of longbeach is needed in the future - before filtering animal_type and intake_condition for "Others"
+
+#longbeach_before_fitlering_Others <- longbeach
+#longbeach <- longbeach_before_fitlering_Others
+```
+
+Filter:
+```{r}
+longbeach <- longbeach %>% 
+  filter(intake_condition != "Other" & animal_type != "Other")
+```
 
 
 #### Animal type vs. intake condition vs. outcome type
 
-Let's now connect all three variables in a tile plot. I will plot animal type against intake condition and use gradient of the tiles to show what is the percentage of positive vs negative outcome. We will not use specific `outcome_type` categories, but return to the variable `outcome_type_posneg`. As a reminder, we collapsed `outcome_type` categories into positive outcome if animal survived, negative if it did not and other for other level(s). Positive outcomes correspond with green segments and negative outcomes with red in previous graphs in this section. 
+Let's now connect all three variables in a tile plot. I will plot animal type against intake condition and use gradient of the tiles to show what is the percentage of positive vs negative outcome. We will not use specific `outcome_type` categories, but return to the variable `outcome_type_posneg`. As a reminder, we collapsed `outcome_type` categories into positive outcome if animal survived, negative if it did not and other for other level(s). Positive outcomes correspond with green segments and negative outcomes with red in previous graphs in this section.
 
 Note: proportion was calculated as positive / positive + negative + other. Therefore it is crucial to notice that proportional graphs tell us about proportion of positive outcomes compared to negative and other outcomes, not just negative. Other outcomes are significantly lower in count compared to negative however
 
 ```{r}
 longbeach %>% 
-  filter(intake_condition != "Other" & animal_type != "Other") %>%
   # count outcome +/- based on intake condition for every animal
   count(animal_type, intake_condition, outcome_type_posneg) %>%                       
   group_by(animal_type, intake_condition) %>%
@@ -770,44 +790,43 @@ longbeach %>%
   aes(x = animal_type_label, y = intake_condition, fill = positive_outcome_type_prop*100) +
   geom_tile(color = "white") + 
   geom_text(aes(label = paste0(n, "\n(", outcome_type_total_posnegother, ")")), color = "#313131", size = 3) + 
+  coord_flip() +
+  #coord_fixed() + 
   scale_fill_gradientn(
     colors = c("#e76254", "#ef8a48", "#fbd587", "white","#d3f2a3", "#90d890", "#4c9b82"),
     labels = scales::label_percent(scale = 1)) +
-  #coord_fixed() + 
   labs(x = NULL, y = "Intake condition of the animal", title = "Positive outcome proportion for each animal type and intake condition (Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of positive outcomes for that intake condition in each animal type.\nNumber in paranthesis is total number of individuals from that animal type with specific intake condition.", fill = "Positive outcome rate \n") + 
   theme_minimal() +
-  coord_flip() +  # Swaps x and y axes
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title.position = "plot",
+    plot.caption = element_text(hjust = 0))
   
 ```
 
-There are several important pieces of information we can gather from this plot. First thing to highlight is that across different animal types we can see decrease in positive outcome proportion between mild and severe physical conditions, as gradient goes from greenish to reddish colors. This is especially noticeable in cats, dogs and small mammals. However, it seems that physical conditions have a more pronounced effect in cats compared to dogs. Generally a lower proportion of positive outcomes is observed across different physical conditions for cats compared to dogs. In general, dogs appear to have the highest positive outcome rate, as more than 50% positive outcomes are expected across all conditions except severe physical. On the other hand, wildlife animals face a positive outcome less than 50% of time across all intake conditions, as indicated by dominantly orange-red colored tiles. 
-
+There are several important pieces of information we can gather from this plot. First thing to highlight is that across different animal types we can see decrease in positive outcome proportion between mild and severe physical conditions, as gradient goes from greenish to reddish colors. This is especially noticeable in cats, dogs and small mammals. However, it seems that physical conditions have a more pronounced effect in cats compared to dogs. Generally a lower proportion of positive outcomes is observed across different physical conditions for cats compared to dogs. In general, dogs appear to have the highest positive outcome rate, as more than 50% positive outcomes are expected across all conditions except severe physical. On the other hand, wildlife animals face a positive outcome less than 50% of time across all intake conditions, as indicated by dominantly orange-red colored tiles.
 
 ```{r}
 longbeach %>% 
-  filter(intake_condition != "Other" & animal_type != "Other") %>%
   count(animal_type)
 ```
-
 
 Let's now repeat this whole section, using adoption instead of broader outcome types.
 
 ### Combining animal type, intake condition and adoption
 
-In this section I will focus in replicating the last plot (tile plot) from the last section. It would not be that interesting to plot `animal_type vs adoption` and `intake_condition vs adoption`, because filling the columns by outcome type in the previous section gave us explicit information about adoptions, as one of the column fills referred to this category specifically (dark green on previous plots). 
+In this section I will focus on replicating the last plot (tile plot) from the last section. It would not be that interesting to plot `animal_type vs adoption` and `intake_condition vs adoption`, because filling the columns by outcome type in the previous section gave us explicit information about adoptions, as one of the column fills referred to this category specifically (dark green on previous plots).
 
 ```{r}
 longbeach %>% 
-  filter(intake_condition != "Other" & animal_type != "Other") %>%
   # count outcome +/- based on intake condition for every animal
-  count(animal_type, intake_condition, outcome_type_posneg) %>%                       
+  count(animal_type, intake_condition, adopted, .drop = FALSE) %>%                      
   group_by(animal_type, intake_condition) %>%
   #calculate total outcomes for each income condition for each animal type and proportion (e.g., positive outcomes for normal cats/ all outcomes for normal cats)
-  mutate(outcome_type_total_posnegother = sum(n),
-         positive_outcome_type_prop = n/outcome_type_total_posnegother) %>%
+  mutate(outcome_type_total = sum(n),
+         outcome_rate = n/outcome_type_total,
+         outcome_rate = ifelse(is.na(outcome_rate), 0, outcome_rate)) %>%
   ungroup() %>%
-  # add total number of ouccomes/cases for every animal type
+  # add total number of outcomes/cases for every animal type
   group_by(animal_type) %>%
   mutate(total_animal_count = sum(n)) %>%
   ungroup() %>%
@@ -825,30 +844,127 @@ longbeach %>%
                                         "Moderate physical",
                                         "Severe physical",
                                         "Other")) %>%
-  filter(outcome_type_posneg == "Positive") %>%
+  filter(adopted == "Yes" & intake_condition != "Other" & animal_type != "Other") %>%
   ungroup() %>%
   ggplot() + 
-  aes(x = animal_type_label, y = intake_condition, fill = positive_outcome_type_prop*100) +
+  aes(x = animal_type_label, y = intake_condition, fill = outcome_rate*100) +
   geom_tile(color = "white") + 
-  geom_text(aes(label = paste0(n, "\n(", outcome_type_total_posnegother, ")")), color = "#313131", size = 3) + 
+  geom_text(aes(label = paste0(n, "\n(", outcome_type_total, ")")), color = "#313131", size = 3) + 
   scale_fill_gradientn(
-    colors = c("#e76254", "#ef8a48", "#fbd587", "white","#d3f2a3", "#90d890", "#4c9b82"),
+    colors = c("#e76254", "#ef8a48", "white","#d3f2a3", "#90d890", "#4c9b82"),
     labels = scales::label_percent(scale = 1)) +
   #coord_fixed() + 
-  labs(x = NULL, y = "Intake condition of the animal", title = "Positive outcome proportion for each animal type and intake condition (Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of positive outcomes for that intake condition in each animal type.\nNumber in paranthesis is total number of individuals from that animal type with specific intake condition.", fill = "Positive outcome rate \n") + 
+  labs(x = NULL, y = "Intake condition of the animal", title = "Adoption rate for each animal type and intake condition (Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of adoptions for that intake condition in each animal type.\nNumbers in paranthesis are total number of individuals from that animal type with specific intake condition.", fill = "Adoption rate") + 
   theme_minimal() +
-  coord_flip() +  # Swaps x and y axes
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  coord_flip() +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title.position = "plot",
+    plot.caption = element_text(hjust = 0))
+```
+
+Similarly to the previous plot, this one reveals several interesting details about how intake condition is associated with adoption rate in different animal types. Highest rates of adoptions are in normal and mildly physically compromised cats and small mammals. This is followed by normal and mildly physically compromised dogs. We can see a severe decrease in adoption rate from mild to severe physical condition in dogs and cats. In all groups with the exception of cats, under-age and under-weight animals seem to have little to no chances of getting adopted. This suggest that potential future owners possibly believe that raising such an animal will be very difficult, or possibly shelters do not offer these animals for adoption as often. Though in the section "Intake condition vs. outcome type" we could see that about 15% of under-age and/or under-weight animals get adopted. It is possible that majority of those animals are cats, as we can see in this plot tat about 20% of under-age and/or under-weight cats get adopted. As we have seen in the section "Animal type vs. outcome type", no wildilfe animals get adopted. Birds have a similarly low rate with a few exceptions in compromised groups and 26 normal individuals getting adopted. Adoption rates are small for exotic animals as well, as only 11 normal and 1 per each physically compromised category were adopted.
+
+Overall, there seems to be more of a binary difference in animal type trends, as cats, dogs and small mammals have adoption rates close to 25-30% percent. On the other hand, other groups share similarly low adoption rate at maximum 5%. Intake conditions exhibit more stepwise (linearly) decreasing rates from normal to most severely physically compromised group. Importantly however, mildly injured animals, especially cats and dogs show higher adoption rates compared to under-age and -weight group. This could be due to fewer offerings of these animals by shelter. On the other hand potential adopters might believe that it is easier to help get mildly compromised animal better, than to take care of under-age or -weight individual in the long run.
+
+
+///////
+
+Ok, let's try to improve the plot and then separately create the table, so that the plot is not oversaturated with information. 
+
+Plot
+```{r}
+# Prepare the order of the levels according tow hat we want in the final plot - animal names sorted by total number and conditions by severity
+
+condition_pcts_labels <- longbeach %>% 
+  count(intake_condition, adopted, .drop = FALSE) %>%
+  group_by(intake_condition) %>%
+  mutate(total_per_condition = sum(n)) %>%
+  filter(adopted == "Yes") %>%
+  mutate(condition_adopted_pct = n/total_per_condition,
+         intake_condition_label = paste0(intake_condition, "\n(", round(condition_adopted_pct*100,1), "%)")) %>%
+  filter(intake_condition != "Other") %>%
+  pull(intake_condition_label)
+
+condition_pcts_labels <- condition_pcts_labels[c(4,5,1,2,3)]
+
+animal_type_pcts_labels <- longbeach %>% 
+  count(animal_type, adopted, .drop = FALSE) %>%
+  group_by(animal_type) %>%
+  mutate(total_per_type = sum(n)) %>%
+  filter(adopted == "Yes") %>%
+  mutate(type_adopted_pct = n/total_per_type,
+         animal_type_label = paste0(animal_type, "\n(", round(type_adopted_pct*100,1), "%)")) %>%
+  filter(animal_type != "Other") %>%
+  pull(animal_type_label)
+
+animal_type_pcts_labels <- animal_type_pcts_labels[c(6,5,4,3,2,1)]
+
+```
+
+
+Plot:
+```{r}
+# calculate adoption proportions for every animal type
+animal_type_adoption_pcts <- longbeach %>% 
+  count(animal_type, adopted, .drop = FALSE) %>%
+  group_by(animal_type) %>%
+  mutate(total_per_type = sum(n)) %>%
+  filter(adopted == "Yes") %>%
+  mutate(type_adopted_pct = n/total_per_type,
+         animal_type_label = paste0(animal_type, "\n(", round(type_adopted_pct*100,1), "%)")) %>%
+  filter(animal_type != "Other") %>%
+  select(animal_type, type_adopted_pct, animal_type_label)
   
+# calculate adoption proportions for every intake condition
+intake_cond_adoption_pcts <- longbeach %>% 
+  filter(intake_condition != "Other" & animal_type != "Other") %>%
+  count(intake_condition, adopted, .drop = FALSE) %>%
+  group_by(intake_condition) %>%
+  mutate(total_per_condition = sum(n)) %>%
+  filter(adopted == "Yes") %>%
+  mutate(condition_adopted_pct = n/total_per_condition,
+         intake_condition_label = paste0(intake_condition, "\n(", round(condition_adopted_pct*100,1), "%)")) %>%
+  select(intake_condition, condition_adopted_pct, intake_condition_label)
+   
+
+# Calculate for each type*condition pair and merge with previous datasets
+
+longbeach %>% 
+  # count outcome +/- based on intake condition for every animal
+  count(animal_type, intake_condition, adopted, .drop = FALSE) %>%                
+  group_by(animal_type, intake_condition) %>%
+  #calculate total outcomes for each income condition for each animal type and proportion (e.g., positive outcomes for normal cats/ all outcomes for normal cats)
+  mutate(anicond_total_outcomes = sum(n),
+         anicond_outcome_rate = n/anicond_total_outcomes,
+         anicond_outcome_rate = ifelse(is.na(anicond_outcome_rate), 0, anicond_outcome_rate)) %>%
+  ungroup() %>%
+  filter(adopted == "Yes" & intake_condition != "Other" & animal_type != "Other") %>%
+  left_join(animal_type_adoption_pcts, by = "animal_type") %>%
+  left_join(intake_cond_adoption_pcts, by = "intake_condition") %>%
+  mutate(animal_type_label = factor(animal_type_label, levels = animal_type_pcts_labels),
+         intake_condition_label = factor(intake_condition_label, levels = condition_pcts_labels)) %>%
+    ggplot() + 
+  aes(x = animal_type_label, y = intake_condition_label, fill = anicond_outcome_rate*100) +
+  geom_tile(color = "white") + 
+  #geom_text(aes(label = paste0(n, "\n(", anicond_total_outcomes, ")")), color = "#313131", size = 3) + 
+  scale_fill_gradientn(
+    colors = c("#e76254", "#ef8a48", "white","#d3f2a3", "#90d890", "#4c9b82"),
+    labels = scales::label_percent(scale = 1)) +
+  labs(x = NULL, y = NULL, title = "Adoption rate for each animal type and intake condition (Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of adoptions for that intake condition in each animal type.\nNumbers in paranthesis are total number of individuals from that animal type with specific intake condition.", fill = "Adoption rate") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title.position = "plot",
+    plot.caption = element_text(hjust = 0)) +
+  coord_flip() +
+  theme(aspect.ratio = 0.66)
+```
+
+
+Table:
+```{r}
+# Maybe not needed since previous graphs includes both image info and text......will think about it. 
+```
 
 
 
-
-
-
-
-
-
-
-
-
+Notes: Ok, daj na grafu samo tiles pa pri žicalih pa conditionih poleg procente napisane v okvirčku. 
