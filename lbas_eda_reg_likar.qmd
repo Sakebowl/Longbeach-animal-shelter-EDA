@@ -9,6 +9,8 @@ editor: visual
 library(tidyverse)
 library(ggplot2)
 library(scales)
+library(paletteer)
+library(treemapify)
 ```
 
 # Introduction
@@ -300,7 +302,7 @@ From these plots we can see that the majority of the animals taken into the Long
 
 
 
-#### Combining animal type and condition
+#### Combining animal type and intake condition
 
 For each type of animal, what number/proportion of them arrived in each intake condition?
 
@@ -353,7 +355,7 @@ longbeach %>%
   scale_fill_manual(values = intake_colors, guide = guide_legend(reverse = TRUE))
 ```
 
-OK, let's try a slightly different approach and tweak the plot by adding percentage scale on both side of the axis, order animal types based on percentage of normal intake condition etc.
+OK, let's try a slightly different approach and tweak the plot by adding percentage scale on both side of the axis, order animal types based on percentage of normal intake condition and add total number of counts next to animal names.
 
 ```{r}
 # Let's first pull the order of the names by proportion of normal intake condition - I tried doing it in the same pipeline, but it does not work
@@ -426,7 +428,7 @@ longbeach %>%
   geom_col(position = "fill") + 
   #geom_col() + 
   theme_minimal() + 
-  labs(y = "Number of animals", x = "Animal type", fill = "Intake type", title = "Proportion of animals by different intake types for each type of animal \n(Long Beach Animal Shelter, 2017–2024)") + 
+  labs(y = "Proportion of animals", x = "Animal type", fill = "Intake type", title = "Proportion of animals by different intake types for each type of animal \n(Long Beach Animal Shelter, 2017–2024)") + 
   scale_fill_paletteer_d("ggthemes::Classic_Green_Orange_12")
 ```
 Majority of dogs and cats in particular are stray animals and a noticeable percentage of animals in those groups coming by owner's surrender. Birds, wildlife and other species are predominantly found in wild life, and presumably injured or ill, as discussed in the end of the previous section. 
@@ -514,10 +516,10 @@ summary(longbeach)
 #longbeach <- longbeach_after_sex
 ```
 
+
+
 ### Outcome type
-
 I will proceed to the next variable, `outcome_type`. Let's see what are the levels of the variable and how we could collapse, lump them.
-
 
 I decide for keeping all the outcomes that are at least 2.5% of the complete sample and lump others. in case of condition "shelter, neuter, return" I am not completely sure what it means as different webpages have different interpretations depending on the context. I will therefore collapse this category with "others".
 ```{r}
@@ -537,7 +539,7 @@ longbeach %>%
   count(outcome_type, sort = TRUE)
 ```
 
-Let's now create a column `adopted`. It will be "Yes" in case of outcome type "adoption" and "No" for all the other outcome types.
+Let's now create a column `adopted`. It will be "Yes" in case of outcome type "adoption" and "No" for all the other outcome types. **At this point, I remove 187 rows from the dataset, as they hame missing values for `outcome_type`.**
 ```{r}
 longbeach <- longbeach %>%
   filter(!is.na(outcome_type)) %>%
@@ -551,7 +553,7 @@ longbeach <- longbeach %>%
 Let's also create a binary + other category `outcome_type_posneg` where we will collapse `outcome_type` into positive if animal survived, negative if it did not and other for other level(s).
 ```{r}
 longbeach %>% 
-  count(outcome_type)
+  count(outcome_type_posneg)
 
 longbeach <- longbeach %>%
   mutate(outcome_type_posneg = fct_collapse(outcome_type,
@@ -572,7 +574,7 @@ OK! Let's finally proceed to plotting `outcome_type` distribution.
 
 ```{r}
 outcome_type_posneg_colors <- c(
-  "Positive" = "#77b7b2",
+  "Positive" = "#4c9b82",
   "Negative" = "#e15859",
   "Other" = "#ebcb2a")
 
@@ -629,6 +631,223 @@ longbeach %>%
   ) + 
   scale_color_manual(values = outcome_type_posneg_colors)
 ```
+
+### Combining animal type, intake condition and outcome type
+
+Data allows me to plot more specific associations that I am looking to investigate with regression models. First, we will do three things with broader `outcome_type` variable:
+
+- Visualize animal type vs. outcome type
+- Visualize intake condition vs. outcome type
+- Tile plot - intake condition vs. animal type, values = proportions with positive outcome
+
+Let's get right to it!
+
+#### Animal type vs. outcome type
+
+Let's first determine color scale, that will be used for outcomes in all visualizations equally.
+```{r}
+outcome_type_colors <- c(
+  "Adoption" = "#4c9b82",
+  "Return to owner" = "#6cc08b",
+  "Euthanasia" = "#e76254",
+  "Died" = "#ef8a48",
+  "Rescue" = "#90d890",
+  "Transfer" = "#d3f2a3",
+  "Other" = "#acacab")
+```
+
+
+Animal type vs. outcome type - investigate whether certain animal types are associated with specific outcomes (e.g. cats getting adopted, dogs being transferred etc.)
+```{r}
+longbeach %>%
+  count(animal_type, outcome_type) %>%
+  mutate(animal_type = fct_reorder(animal_type, n, .fun = sum)) %>%
+  mutate(outcome_type = fct_relevel(outcome_type,
+                                    "Euthanasia",
+                                    "Died",
+                                    "Other",
+                                    "Transfer",
+                                    "Rescue",
+                                    "Return to owner",
+                                    "Adoption")) %>%
+  ggplot() + 
+  aes(animal_type, n, fill = outcome_type) +
+  geom_col(position = "fill") + 
+  coord_flip() + 
+  theme_minimal() + 
+  labs(x = "Animal type", y = "Proportion of animals with a certain outcome (%)", fill = "Outcome type", title = "Proportions of different outcomes for different animal types (Long Beach Animal Shelter, 2017–2024") + 
+  scale_y_continuous(
+  labels = label_percent(), 
+  breaks = seq(0, 1, 0.2),
+  sec.axis = dup_axis(labels = label_percent(), name = NULL)) +
+  theme(
+    plot.title.position = "plot",
+    plot.caption = element_text(hjust = 0)) +
+  scale_fill_manual(values = outcome_type_colors, guide = guide_legend(reverse = TRUE))
+```
+
+There are a few things we can conclude from this visualization. Small mammals have the highest proportion of adoptions, followed closely by dogs and cats. While a insignificant proportion of cats is returned to the owners, situation is different for dogs. About 30% of dogs are returned to their owner. It is possible that a significant percentage of stray dogs have escaped their home and were roaming free for a while and then returned to their owner. On the other hand it is possible that much lower proportion of stray cats have escaped their home recently, but are actually street-based animals. Overall, proportion of animals euthanized is about 2.5x higher for cats than for dogs. Highest proportion of euthanasia in a specific animal type is in wildlife (~60%) and animals classified as "other"(~50%). We have speculated in the previous chapters that wildlife animals perhaps end up in the shelter more frequently because of their high rate of moderate and severe injuries (50-55% combined; reported in section "Combining animal type and intake condition"). It is possible that if big proportion of these animals cannot get better, be healed, they highly likely end up euthanized instead of returned to natural habitat. 
+
+While positive outcomes (bar segments in green) are about 90% for dogs, 80% for small mammals, 80% for exotic animals, 65% for cats and slightly above 60% for birds, wildlife animals and others are more likely to result in a negative outcome (55% for others, 65% for wildlife). 
+
+
+#### Intake condition vs. outcome type
+
+I will now repeat the same procedure as in the previous section to invastigate possible associations between intake condition and outcome type. With this, we will be able to get some information whether the condition in which the animal is taken into the shelter can give the caretakers any approximation about the most likely outcome for that animal.
+```{r}
+longbeach %>%
+  count(intake_condition, outcome_type) %>%
+  mutate(intake_condition = fct_relevel(intake_condition,
+                                        "Normal",
+                                        "Under age/weight",
+                                        "Mild physical",
+                                        "Moderate physical",
+                                        "Severe physical",
+                                        "Other")) %>%
+  mutate(outcome_type = fct_relevel(outcome_type,
+                                    "Euthanasia",
+                                    "Died",
+                                    "Other",
+                                    "Transfer",
+                                    "Rescue",
+                                    "Return to owner",
+                                    "Adoption")) %>%
+  ggplot() + 
+  aes(intake_condition, n, fill = outcome_type) +
+  geom_col(position = "fill") + 
+  coord_flip() + 
+  theme_minimal() + 
+  labs(x = "Intake", y = "Proportion of animals (%)", fill = "Outcome type", title = "Proportions of specific outcome for different intake conditions (Long Beach Animal Shelter, 2017–2024)") + 
+  scale_y_continuous(
+  labels = label_percent(), 
+  breaks = seq(0, 1, 0.2),
+  sec.axis = dup_axis(labels = label_percent(), name = NULL)) +
+  theme(
+    plot.title.position = "plot",
+    plot.caption = element_text(hjust = 0)) +
+  scale_fill_manual(values = outcome_type_colors, guide = guide_legend(reverse = TRUE))
+```
+From this plot we can see that intake condition is associated with the outcome. Almost 90% of animals taken in in normal condition are likely to face a positive outcome, meaning they will stay alive and either get adopted, returned to their owner or be transferred to another rescue or shelter facility. With increase in severity of physical condition, the chances of positive outcome decrease, with about 70% positive outcomes for under-age and/or under-weight animals, and those with mild physical condition. About 55% of animals in moderate physical condition will face a positive outcome and this proportion drops to about 25% for severely injured of ill animals. 
+
+
+#### Animal type vs. intake condition vs. outcome type
+
+Let's now connect all three variables in a tile plot. I will plot animal type against intake condition and use gradient of the tiles to show what is the percentage of positive vs negative outcome. We will not use specific `outcome_type` categories, but return to the variable `outcome_type_posneg`. As a reminder, we collapsed `outcome_type` categories into positive outcome if animal survived, negative if it did not and other for other level(s). Positive outcomes correspond with green segments and negative outcomes with red in previous graphs in this section. 
+
+Note: proportion was calculated as positive / positive + negative + other. Therefore it is crucial to notice that proportional graphs tell us about proportion of positive outcomes compared to negative and other outcomes, not just negative. Other outcomes are significantly lower in count compared to negative however
+
+```{r}
+longbeach %>% 
+  filter(intake_condition != "Other" & animal_type != "Other") %>%
+  # count outcome +/- based on intake condition for every animal
+  count(animal_type, intake_condition, outcome_type_posneg) %>%                       
+  group_by(animal_type, intake_condition) %>%
+  #calculate total outcomes for each income condition for each animal type and proportion (e.g., positive outcomes for normal cats/ all outcomes for normal cats)
+  mutate(outcome_type_total_posnegother = sum(n),
+         positive_outcome_type_prop = n/outcome_type_total_posnegother) %>%
+  ungroup() %>%
+  # add total number of ouccomes/cases for every animal type
+  group_by(animal_type) %>%
+  mutate(total_animal_count = sum(n)) %>%
+  ungroup() %>%
+  # add total number of outcomes/cases for every intake condition
+  group_by(intake_condition) %>%
+  mutate(intake_condition_total = sum(n)) %>%
+  ungroup() %>%
+  # Add new column with animal types and with their total count in brackets and relevel/reorder them in the same step
+  mutate(animal_type_label = fct_reorder(paste0(animal_type, " (", total_animal_count, ")"),
+                                         total_animal_count)) %>%
+  mutate(intake_condition = fct_relevel(intake_condition,
+                                        "Normal",
+                                        "Under age/weight",
+                                        "Mild physical",
+                                        "Moderate physical",
+                                        "Severe physical",
+                                        "Other")) %>%
+  filter(outcome_type_posneg == "Positive") %>%
+  ungroup() %>%
+  ggplot() + 
+  aes(x = animal_type_label, y = intake_condition, fill = positive_outcome_type_prop*100) +
+  geom_tile(color = "white") + 
+  geom_text(aes(label = paste0(n, "\n(", outcome_type_total_posnegother, ")")), color = "#313131", size = 3) + 
+  scale_fill_gradientn(
+    colors = c("#e76254", "#ef8a48", "#fbd587", "white","#d3f2a3", "#90d890", "#4c9b82"),
+    labels = scales::label_percent(scale = 1)) +
+  #coord_fixed() + 
+  labs(x = NULL, y = "Intake condition of the animal", title = "Positive outcome proportion for each animal type and intake condition (Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of positive outcomes for that intake condition in each animal type.\nNumber in paranthesis is total number of individuals from that animal type with specific intake condition.", fill = "Positive outcome rate \n") + 
+  theme_minimal() +
+  coord_flip() +  # Swaps x and y axes
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
+
+There are several important pieces of information we can gather from this plot. First thing to highlight is that across different animal types we can see decrease in positive outcome proportion between mild and severe physical conditions, as gradient goes from greenish to reddish colors. This is especially noticeable in cats, dogs and small mammals. However, it seems that physical conditions have a more pronounced effect in cats compared to dogs. Generally a lower proportion of positive outcomes is observed across different physical conditions for cats compared to dogs. In general, dogs appear to have the highest positive outcome rate, as more than 50% positive outcomes are expected across all conditions except severe physical. On the other hand, wildlife animals face a positive outcome less than 50% of time across all intake conditions, as indicated by dominantly orange-red colored tiles. 
+
+
+```{r}
+longbeach %>% 
+  filter(intake_condition != "Other" & animal_type != "Other") %>%
+  count(animal_type)
+```
+
+
+Let's now repeat this whole section, using adoption instead of broader outcome types.
+
+### Combining animal type, intake condition and adoption
+
+In this section I will focus in replicating the last plot (tile plot) from the last section. It would not be that interesting to plot `animal_type vs adoption` and `intake_condition vs adoption`, because filling the columns by outcome type in the previous section gave us explicit information about adoptions, as one of the column fills referred to this category specifically (dark green on previous plots). 
+
+```{r}
+longbeach %>% 
+  filter(intake_condition != "Other" & animal_type != "Other") %>%
+  # count outcome +/- based on intake condition for every animal
+  count(animal_type, intake_condition, outcome_type_posneg) %>%                       
+  group_by(animal_type, intake_condition) %>%
+  #calculate total outcomes for each income condition for each animal type and proportion (e.g., positive outcomes for normal cats/ all outcomes for normal cats)
+  mutate(outcome_type_total_posnegother = sum(n),
+         positive_outcome_type_prop = n/outcome_type_total_posnegother) %>%
+  ungroup() %>%
+  # add total number of ouccomes/cases for every animal type
+  group_by(animal_type) %>%
+  mutate(total_animal_count = sum(n)) %>%
+  ungroup() %>%
+  # add total number of outcomes/cases for every intake condition
+  group_by(intake_condition) %>%
+  mutate(intake_condition_total = sum(n)) %>%
+  ungroup() %>%
+  # Add new column with animal types and with their total count in brackets and relevel/reorder them in the same step
+  mutate(animal_type_label = fct_reorder(paste0(animal_type, " (", total_animal_count, ")"),
+                                         total_animal_count)) %>%
+  mutate(intake_condition = fct_relevel(intake_condition,
+                                        "Normal",
+                                        "Under age/weight",
+                                        "Mild physical",
+                                        "Moderate physical",
+                                        "Severe physical",
+                                        "Other")) %>%
+  filter(outcome_type_posneg == "Positive") %>%
+  ungroup() %>%
+  ggplot() + 
+  aes(x = animal_type_label, y = intake_condition, fill = positive_outcome_type_prop*100) +
+  geom_tile(color = "white") + 
+  geom_text(aes(label = paste0(n, "\n(", outcome_type_total_posnegother, ")")), color = "#313131", size = 3) + 
+  scale_fill_gradientn(
+    colors = c("#e76254", "#ef8a48", "#fbd587", "white","#d3f2a3", "#90d890", "#4c9b82"),
+    labels = scales::label_percent(scale = 1)) +
+  #coord_fixed() + 
+  labs(x = NULL, y = "Intake condition of the animal", title = "Positive outcome proportion for each animal type and intake condition (Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of positive outcomes for that intake condition in each animal type.\nNumber in paranthesis is total number of individuals from that animal type with specific intake condition.", fill = "Positive outcome rate \n") + 
+  theme_minimal() +
+  coord_flip() +  # Swaps x and y axes
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+
+
+
+
+
+
+
+
 
 
 
