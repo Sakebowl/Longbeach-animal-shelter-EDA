@@ -14,6 +14,9 @@ library(scales)
 library(paletteer)
 library(treemapify)
 library(knitr)
+library(sjPlot)
+library(performance)
+library(broom)
 ```
 
 # Introduction
@@ -897,7 +900,7 @@ animal_type_pcts_labels <- longbeach %>%
   filter(animal_type != "Other") %>%
   pull(animal_type_label)
 
-animal_type_pcts_labels <- animal_type_pcts_labels[c(6,5,4,3,2,1)]
+animal_type_pcts_labels <- rev(c("Cats\n(25.2%)","Dogs\n(26.7%)" ,"Small mammals\n(30%)","Birds\n(1.5%)","Exotic\n(4.1%)","Wildlife\n(0%)"))
 
 ```
 
@@ -946,7 +949,7 @@ longbeach %>%
     ggplot() + 
   aes(x = animal_type_label, y = intake_condition_label, fill = anicond_outcome_rate*100) +
   geom_tile(color = "white") + 
-  #geom_text(aes(label = paste0(n, "\n(", anicond_total_outcomes, ")")), color = "#313131", size = 3) + 
+  geom_text(aes(label = paste0(n, "\n(", anicond_total_outcomes, ")")), color = "#313131", size = 3) + 
   scale_fill_gradientn(
     colors = c("#e76254", "#ef8a48", "white","#d3f2a3", "#90d890", "#4c9b82"),
     labels = scales::label_percent(scale = 1)) +
@@ -966,5 +969,397 @@ Table:
 ```
 
 
+### Age
 
-Notes: Ok, daj na grafu samo tiles pa pri žicalih pa conditionih poleg procente napisane v okvirčku. 
+Let's now focus on the only continuous variable that I am planning to use in the analysis. Let's first check the type of variable and if there are any false data entry points.
+```{r}
+summary(longbeach)
+# As dob and intake_date are now "double", we have to change them to date variables
+longbeach <- longbeach %>%
+  mutate(dob = as.Date(dob),
+         intake_date = as.Date(intake_date))
+
+# Now let's see what is the distribution of these dates and if there are any false datapoints 
+summary(longbeach)
+
+# Well there is a date set in 2031 in dob variable, which cannot be as we are only in 2025. Let's remove this value from the dataset.
+longbeach <- longbeach %>%
+  filter(dob < as.Date("2024-12-31"))
+
+longbeach %>%
+  ggplot(aes(dob)) + 
+  geom_histogram() + 
+  labs(x = "Date of birth", y = "Number of animals", title = "Distribution of animals in the shelter by date of birth \n(Long Beach Animal Shelter, 2017–2024)") + 
+  theme_minimal()
+```
+
+We can now use `dob` and `intake_date` to calculate the age on an animal at intake, which I will use later on in the regression models.
+```{r}
+longbeach %>%
+  mutate(Age = ifelse(is.na(dob), NA, intake_date-dob)) %>%
+  filter(Age > 0) %>%
+  ggplot() + 
+  aes((Age), fill = adopted) + 
+  geom_histogram(bins = 20, position = "dodge") + 
+  scale_x_log10() + 
+  theme_minimal() + 
+  labs(x = "Age in days (log transformed)", y = "Number of animals", title = "Adoption outcomes per age on an animal \n(Long Beach Animal Shelter, 2017–2024)", fill = "Adopted")
+  #facet_wrap(~adopted)
+```
+```{r}
+longbeach %>%
+  mutate(Age = as.numeric(intake_date - dob)) %>%
+  filter(!is.na(adopted), Age > 0) %>%
+  mutate(adopted_num = ifelse(adopted == "Yes", 1, 0)) %>%
+  ggplot(aes(x = Age, y = adopted_num)) +
+  geom_smooth(method = "loess", formula = y ~ x, se = TRUE) +
+  #scale_y_continuous(labels = scales::percent_format(), limits = c(0, 1)) +
+  labs(x = "Age in days (log transformed)", y = "Adoption Rate", title = "Adoption Rate by Age") + 
+  theme_minimal() + 
+  scale_x_log10() 
+```
+
+
+```{r}
+longbeach %>%
+  filter(animal_type == "Cats" | animal_type == "Dogs") %>%
+  mutate(Age = as.numeric(intake_date - dob)) %>%
+  filter(!is.na(adopted), Age > 0) %>%
+  mutate(adopted_num = ifelse(adopted == "Yes", 1, 0)) %>%
+  ggplot(aes(x = Age, y = adopted_num)) +
+  geom_smooth(method = "loess", formula = y ~ x, se = TRUE) +
+  #scale_y_continuous(labels = scales::percent_format(), limits = c(0, 1)) +
+  labs(x = "Age in days (log transformed)", y = "Adoption Rate", title = "Adoption Rate by Age") + 
+  theme_minimal() + 
+  scale_x_log10() + 
+  facet_wrap(~animal_type)
+```
+
+Huh, alright. At this point I have to decide how to continue with this variable. I see two options - one is log() + quadratic model, as visualisation suggest rughly a quadratic relationship between age and adoption rate. I do not have that much experience with the combination of these, and while I know how to construct a model, I am a bit reserved about the visualizations (still feasible) and model interpretation. I am thinking to use grouping / binning for `Age` and use corresponding categories for different animal types. Binning a continuous variable into groups leads to a loss of statistical power. This is because binning reduces the amount of information available for analysis by grouping continuous values into discrete categories, making it harder to detect subtle but real relationships between variables. Though I still believe at this point, for a solo UNI assignment, where I do not have collaborators to work together on result/model interpretation etc. I think I can do my work better with grouped variable. 
+
+
+# Logistic regression models
+
+In this analysis I aim to investigate whether contextual factors—such as the condition in which the animal was taken in and whether it was sterilised—can significantly improve the prediction of adoption outcomes, compared to a model that includes only animal-focused characteristics.
+
+**Research Question:**
+Does the inclusion of contextual variables improve model fit in predicting whether an animal gets adopted?
+
+**Hypothesis:**
+Based on preliminary exploratory analysis, I hypothesise that contextual factors will significantly improve the model’s predictive performance over a baseline model that includes only animal-level variables.
+
+**Data Description:**
+
+The outcome variable is Adoption (1 = adopted, 0 = not adopted).
+
+I restricted the dataset to cats and dogs, excluding other animal types such as birds, exotic, and wildilfe animals, and small mammals due to insufficient sample sizes and for practical reasons that dogs and cats are usually most prevalent animal types in shelters and are most commonly adopted animal types. This narrows the investigation and focuses on specific groups and their adoption rates.
+
+**SIMPLE MODEL **
+
+In the simple model, I will focus on animal-related, native, given factors, which do not depend on contextual factors or interventions. They include:
+
+- Animal Type (cat or dog)
+- Sex (male or female)
+- Age, categorized into five bins reflecting developmental stages:
+
+  -Junior (0–1 year),
+  -Young Adult (1–6 years for cats, up to 2 years for dogs),
+  -Mature Adult (7–10 years for cats, 3–6 years for dogs),
+  -Senior (10+ for cats, 7–11 years for dogs),
+  -Geriatric (older then previous levels; in both categories).
+
+This categorization reflects species-specific aging and was used to simplify interpretation and ensure comparability across species. Categorization was based on scientific guidelines for age categorization (Harvey, 2021; Quimby et al., 2021).
+
+**COMPLEX MODEL**
+In the complex model I will add so called contextual predictors, which are situational or depend on interventions. They will include:
+
+- Intake condition, reduced to five categories (normal, under age/weight, mild physical, moderate physical, severe physical). *Less frequent or poorly defined were excluded due to small sample sizes and lack of sufficient context for interpretation.*
+- Sterilized status (1 = yes, 0 = no)
+
+
+These variables were selected based on theoretical relevance, availability, and data quality. The regression analysis compares a baseline model including only animal-level variables to a complex model that incorporates contextual predictors.
+
+## Final dataset preparation
+```{r}
+lb_analysis <- longbeach %>%
+  # Use only cats and dogs
+  filter(animal_type == "Cats" | animal_type == "Dogs") %>%
+  # Filter out other intake conditions due to reasons listed above
+  filter(intake_condition != "Other") %>%
+  # Filter out Unknown sterilisation status
+  filter(sterilised != "Unknown") %>%
+  mutate(age_years = as.numeric(intake_date - dob)/365) %>%
+  # Filter false data, as there are false datapoints (age < 0)  (113 datapoints removed)
+  filter(age_years > -0.0001) %>%   
+  # Grouping into age bins
+  mutate(age_bins = case_when(
+    # Junior (0–1 year) for both cats and dogs
+    age_years < 1 ~ "Junior",
+    
+    # Cats
+    animal_type == "Cats" & age_years >= 1 & age_years <= 6 ~ "Young adult",
+    animal_type == "Cats" & age_years > 6 & age_years <= 10 ~ "Mature adult",
+    animal_type == "Cats" & age_years > 10 & age_years <= 13 ~ "Senior",
+    animal_type == "Cats" & age_years > 13 ~ "Geriatric",
+    
+    # Dogs
+    animal_type == "Dogs" & age_years >= 1 & age_years < 2 ~ "Young adult",
+    animal_type == "Dogs" & age_years >= 2 & age_years <= 6 ~ "Mature adult",
+    animal_type == "Dogs" & age_years > 6 & age_years <= 11 ~ "Senior",
+    animal_type == "Dogs" & age_years > 11 ~ "Geriatric",
+    
+    TRUE ~ NA_character_
+  )) %>%
+  mutate(age_bins = fct_relevel(age_bins, "Junior", "Young adult", "Mature adult", "Senior", "Geriatric"),
+         intake_condition = fct_relevel(intake_condition, "Normal", "Mild physical", "Moderate physical", "Severe physical", "Under age/weight"),
+         adopted = ifelse(adopted == "Yes", 1, 0),
+         sterilised = factor(sterilised),
+         sex = factor(sex)) %>%
+  select(animal_id, animal_type, sex, age_bins, intake_condition, sterilised, adopted)
+
+```
+
+
+
+## Simple model (animal related, native factors)
+
+### Construct the model
+```{r}
+lb_simple_mdl <- glm(adopted ~ animal_type + sex + age_bins, 
+                  data = lb_analysis, family = binomial)
+```
+
+
+Check model summary:
+```{r}
+summary(lb_simple_mdl)
+```
+
+And model performance:
+```{r}
+model_performance(lb_simple_mdl)
+```
+
+
+### Visualize the model
+```{r}
+plot_model(lb_simple_mdl, type = "pred", terms = c("age_bins", "animal_type")) + theme_minimal() + labs(x = "Age bins", y = "Adopted", title = "Predicted probabilities of adoption for dogs and cats, separated by age bins", color = "Animal type")
+```
+
+### Checking assumptions
+```{r}
+check_model(lb_simple_mdl)
+```
+Check residuals:
+```{r}
+check_residuals(lb_simple_mdl)
+```
+
+Multicolinearity:
+```{r}
+check_collinearity(lb_simple_mdl)
+```
+
+Influential points:
+```{r}
+# Leverage
+n_obs = nrow(lb_analysis)
+params = length(coef(lb_simple_mdl)) - 1
+
+influential_lev <- hatvalues(lb_simple_mdl) >  2*(params+1)/n_obs
+sum(influential_lev)
+
+lb_simple_mdl %>%
+  augment() %>%
+  mutate(high_leverage = ifelse(.hat > 2*(params+1)/n_obs, 1, 0)) %>%
+  count(high_leverage)
+
+# OK so there are 781 influential points if we only consider leverage. Let's now check Cook's distance.
+
+# Cook's distance
+influential_cd <- cooks.distance(lb_simple_mdl) > 4 / n_obs
+sum(influential_cd) 
+sum(cooks.distance(lb_simple_mdl) > 1)
+# And 523 influential points according to 4/n rule of thumb and 0 according to D > 1. 
+
+#First I want to check whether leverage and Cook's distance influential points overlap
+check_influence_overlap = data.frame(lev = influential_lev, cd = influential_cd )
+check_influence_overlap %>%
+  summarise(sum(lev == TRUE & cd == TRUE))
+# There are 118 points that are considered influential both to leverage and Cook's distance threshold
+
+# I want to check the data that is influential according to Cook's distance
+lb_analysis %>%
+  filter(influential_cd) %>%
+  count(age_bins)
+
+# All the influential points according to Cook's distance come from older groups. Let's now check what is overall number of adoptions per age bin. 
+
+lb_analysis %>%
+  #filter(influential_cd) %>%
+  count(age_bins, adopted)
+
+# Hm, ok. We see that basically all the influential points from "geriatric" and "senior" are datapoints that are also "adopted".More on this topic in the text below. 
+```
+
+Cook’s distance analysis revealed influential observations (n = 523) concentrated among adopted senior (n=336/1,802 total seniors) and geriatric (n=67/586 total geriatrics) animals. Notably, these points accounted for all adoptions in their age groups—when hypothetically excluded, the model would lose its ability to estimate adoption effects for senior/geriatric animals entirely. To address this,I will try one solution: merge senior and geriatric categories into an "Older" group and re-analyse the model to see what happens. 
+
+
+## Updated simple model (merging "geriatric" and "senior" age bins)
+
+Merge levels:
+```{r}
+lb_analysis_merged_age <- lb_analysis %>%
+  mutate(age_bins = fct_collapse(age_bins, "Senior" = c("Senior", "Geriatric")))
+```
+
+
+Construct new model:
+```{r}
+lb_simple_merged_mdl <- glm(adopted ~ animal_type + sex + age_bins, 
+                  data = lb_analysis_merged_age, family = binomial)
+```
+
+Check model summary:
+```{r}
+summary(lb_simple_merged_mdl)
+```
+
+And model performance:
+```{r}
+model_performance(lb_simple_merged_mdl)
+```
+
+
+### Visualize the model
+```{r}
+plot_model(lb_simple_merged_mdl, type = "pred", terms = c("age_bins", "animal_type")) + theme_minimal() + labs(x = "Age bins", y = "Adopted", title = "Predicted probabilities of adoption for dogs and cats, separated by age bins", color = "Animal type")
+```
+
+
+### Checking assumptions
+
+Multicolinearity:
+```{r}
+check_collinearity(lb_simple_merged_mdl)
+```
+
+Influential points:
+```{r}
+# Leverage
+n_obs_2 = nrow(lb_analysis)
+params_2 = length(coef(lb_simple_merged_mdl)) - 1
+
+influential_lev_2 <- hatvalues(lb_simple_merged_mdl) >  2*(params_2+1)/n_obs_2
+sum(influential_lev_2)
+
+lb_simple_merged_mdl %>%
+  augment() %>%
+  mutate(high_leverage = ifelse(.hat > 2*(params_2+1)/n_obs_2, 1, 0)) %>%
+  count(high_leverage)
+
+# OK so after merging age bins, there are no more influential points when leverage is considered.
+
+# Cook's distance
+influential_cd_2 <- cooks.distance(lb_simple_merged_mdl) > 4 / n_obs_2
+sum(influential_cd_2) 
+sum(cooks.distance(lb_simple_merged_mdl) > 1)
+# We still have 523 influential points according to 4/n rule of thumb and 0 according to D > 1. However maxmimum Cook's distance decreased from about 0.002 to about 0.0005, so there was definitely some improvement after age bin merging. 
+
+```
+
+Check residuals - here is where I ran into a bit of confusion that will probably take me some time to figure out, probably more time is needed than the deadline for the report. I was checking residuals in 2 ways, one with `check_residuals` and another with `binned residuals` (see both below). 
+
+Initial checks with check_residuals() indicated no major violations of model assumptions (quantile residuals followed expected uniform distribution, however this is NOT a requirement in any case, at least to my current knowledge). However, the binned residuals plot (binned_residuals()) showed poor fit, with only 31% of residuals within error bounds—suggesting localized prediction inaccuracies for certain subgroups. While tools like DHARMa (simulated residuals) were explored, the results (a gray-shaded plot with a straight red line) proved difficult to interpret given time constraints and my limited familiarity with advanced diagnostics. At this point I am not sure how to deal with this problem, so I think I will continue and be careful about interpretation of model results later on. 
+
+```{r}
+check_residuals(lb_simple_merged_mdl)
+binned_residuals(lb_simple_merged_mdl)
+simulated_residuals <- simulateResiduals(lb_simple_merged_mdl)
+plot(simulated_residuals)
+```
+
+
+
+
+
+
+
+
+## Complex model
+
+```{r}
+lb_complex_mdl <- glm(adopted ~ animal_type + sex + age_bins + sterilised + intake_condition, 
+                  data = lb_analysis, family = binomial)
+
+
+```{r}
+summary(lb_complex_mdl)
+```
+
+```{r}
+plot_model(lb_complex_mdl, type = "pred", terms = c("animal_type", "intake_condition", "age_bins", "sterilised [Yes]"))
+```
+```{r}
+plot_model(lb_complex_mdl, type = "pred", terms = c("animal_type", "intake_condition", "age_bins", "sterilised"))
+```
+
+
+
+```{r}
+r2(lb_complex_mdl)
+check_model(lb_complex_mdl)
+binned_residuals(lb_complex_mdl)
+
+library(DHARMa)
+simulated_residuals <- simulateResiduals(lb_complex_mdl)
+plot(simulated_residuals)
+```
+
+```{r}
+lb_simple_mdl %>%
+  augment() %>%
+  arrange(desc(.cooksd)) %>%
+  mutate(cd_t = ifelse(.cooksd > 4/n(), "Influential", "Ok")) %>%
+  count(cd_t)
+
+plot(lb_simple_mdl, which = 4)
+influence.measures(lb_simple_mdl)
+```
+
+Let's see what happens if we remove outliers.
+
+```{r}
+# Check influential points
+influential <- cooks.distance(lb_simple_mdl) > 4 / nobs(lb_simple_mdl)
+sum(influential)  # ~500
+
+lb_analysis %>%
+  filter(influential) %>%
+  count(age_bins)
+
+lb_analysis %>%
+  count(age_bins, intake_condition)
+
+# Compare models
+simple_model_clean <- update(lb_simple_mdl, subset = !influential)
+summary(lb_simple_mdl)
+summary(simple_model_clean)
+
+
+plot_model(simple_model_clean, type = "pred")
+coef_diff  # Examine changes
+```
+
+
+### Model comparisons
+
+```{r}
+anova(lb_simple_mdl, lb_complex_mdl)
+compare_performance(lb_simple_mdl, lb_complex_mdl, rank = TRUE, verbose = FALSE)
+```
+
+```{r}
+test_performance(lb_simple_mdl, lb_complex_mdl)
+```
+
