@@ -1275,10 +1275,22 @@ Initial checks with check_residuals() indicated no major violations of model ass
 ```{r}
 check_residuals(lb_simple_merged_mdl)
 binned_residuals(lb_simple_merged_mdl)
+binned_residuals(lb_simple_merged_mdl, term = "animal_type")
 simulated_residuals <- simulateResiduals(lb_simple_merged_mdl)
 plot(simulated_residuals)
 ```
 
+```{r}
+library(pROC)
+
+# Get predicted probabilities
+pred_probs <- predict(lb_simple_merged_mdl, type = "response")
+
+# Calculate ROC curve
+roc_curve <- roc(lb_analysis$adopted, pred_probs)
+plot(roc_curve)  # Visualize
+auc(roc_curve)   # Get AUC (0.5 = random, 1 = perfect)
+```
 
 
 
@@ -1350,6 +1362,30 @@ summary(simple_model_clean)
 plot_model(simple_model_clean, type = "pred")
 coef_diff  # Examine changes
 ```
+
+
+```{r}
+# Get predicted probabilities
+pred_probs <- predict(lb_complex_mdl, type = "response")
+
+# Calculate ROC curve
+roc_curve <- roc(lb_analysis$adopted, pred_probs)
+plot(roc_curve)  # Visualize
+auc(roc_curve)   # Get AUC (0.5 = random, 1 = perfect)
+```
+
+```{r}
+# For the complex model
+lb_analysis_copy <- lb_analysis
+lb_analysis_copy$pred_prob <- predict(lb_complex_mdl, type = "response")
+ggplot(lb_analysis_copy, aes(x = pred_prob, y = adopted)) + 
+  geom_smooth(method = "loess") + 
+  labs(title = "Calibration Plot") + 
+  coord_fixed()
+```
+
+
+
 
 
 ### Model comparisons
