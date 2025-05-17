@@ -2,6 +2,11 @@
 title: "Long Beach Animal Shelter - EDA"
 author: "Miha Likar"
 format: html
+html:
+    toc: true
+    toc-depth: 4
+    toc-expand: 1
+    toc-title: "Contents"
 editor: visual
 editor_options: 
   chunk_output_type: inline
@@ -17,6 +22,10 @@ library(knitr)
 library(sjPlot)
 library(performance)
 library(broom)
+library(pROC)
+library(caret)
+library(DHARMa)
+library(kableExtra)
 ```
 
 # Introduction
@@ -1115,8 +1124,7 @@ lb_analysis <- longbeach %>%
          adopted = ifelse(adopted == "Yes", 1, 0),
          sterilised = factor(sterilised),
          sex = factor(sex)) %>%
-  select(animal_id, animal_type, sex, age_bins, intake_condition, sterilised, adopted)
-
+  select(animal_id, animal_type, sex, age_bins, intake_condition, sterilised, adopted) 
 ```
 
 
@@ -1135,11 +1143,6 @@ Check model summary:
 summary(lb_simple_mdl)
 ```
 
-And model performance:
-```{r}
-model_performance(lb_simple_mdl)
-```
-
 
 ### Visualize the model
 ```{r}
@@ -1150,17 +1153,19 @@ plot_model(lb_simple_mdl, type = "pred", terms = c("age_bins", "animal_type")) +
 ```{r}
 check_model(lb_simple_mdl)
 ```
-Check residuals:
+**Check residuals:**
+
+Not mandatory for logistic regression, but anyways.
 ```{r}
 check_residuals(lb_simple_mdl)
 ```
 
-Multicolinearity:
+**Multicollinearity:**
 ```{r}
 check_collinearity(lb_simple_mdl)
 ```
 
-Influential points:
+**Influential points:**
 ```{r}
 # Leverage
 n_obs = nrow(lb_analysis)
@@ -1199,10 +1204,79 @@ lb_analysis %>%
   #filter(influential_cd) %>%
   count(age_bins, adopted)
 
-# Hm, ok. We see that basically all the influential points from "geriatric" and "senior" are datapoints that are also "adopted".More on this topic in the text below. 
+# We see that basically all the influential points from "geriatric" and "senior" are datapoints that are also "adopted". More on this topic in the text below. 
 ```
 
 Cook’s distance analysis revealed influential observations (n = 523) concentrated among adopted senior (n=336/1,802 total seniors) and geriatric (n=67/586 total geriatrics) animals. Notably, these points accounted for all adoptions in their age groups—when hypothetically excluded, the model would lose its ability to estimate adoption effects for senior/geriatric animals entirely. To address this,I will try one solution: merge senior and geriatric categories into an "Older" group and re-analyse the model to see what happens. 
+
+
+### Assessing model fit
+
+#### Preudo R-squared
+```{r}
+model_performance(lb_simple_mdl)   # Focusing on Tjur's R2
+```
+
+
+#### ROC and AUC
+```{r}
+# Get predicted probabilities
+pred_probs_simple_mdl <- predict(lb_simple_mdl, type = "response")
+
+# Calculate ROC curve
+roc_curve_simple_mdl <- roc(lb_analysis$adopted, pred_probs_simple_mdl)
+plot(roc_curve_simple_mdl)  # Visualize
+auc(roc_curve_simple_mdl)   
+```
+
+Extract threshold 
+```{r}
+lb_simple_mdl_thresh <- coords(roc_curve_simple_mdl, "best", ret = "threshold")
+```
+
+
+#### Confusion matrix for determining accuracy
+```{r}
+lb_simple_mdl_pred_binary <- ifelse(pred_probs_simple_mdl > lb_simple_mdl_thresh[[1]], "Yes", "No")
+
+lb_analysis <- lb_analysis %>%
+  mutate(adopted_str = ifelse(adopted == 0, "No", "Yes"))
+
+
+lb_simple_mdl_conf_matrix <- confusionMatrix(factor(lb_simple_mdl_pred_binary), factor(lb_analysis$adopted_str))
+```
+
+
+#### All model fit indices:
+```{r}
+# Extract variables
+lb_simple_mdl_pseudo_r2 <- round(model_performance(lb_simple_mdl)[[4]], 4)
+lb_simple_mdl_auc_val <- round(auc(roc_curve_simple_mdl)[1],4)
+lb_simple_mdl_accuracy <- round(lb_simple_mdl_conf_matrix$overall["Accuracy"], 4)
+
+# Nicely formatted output
+cat("Simple model - Model Fit Summary:\n",
+    "---------------------------------\n",
+    sprintf("McFadden's Pseudo R²: %.3f\n", lb_simple_mdl_pseudo_r2),
+    sprintf("AUC (ROC): %.3f\n", lb_simple_mdl_auc_val),
+    sprintf("Accuracy: %.3f\n", lb_simple_mdl_accuracy))
+```
+
+
+
+
+### Summary of the simple model
+
+Important things to point out:
+
+- **Model summary:** The basic logistic regression showed dogs had significantly higher adoption odds than cats (β=0.168, p<0.001), while sex had no significant effect. All older age categories showed progressively lower adoption odds compared to juveniles, with the strongest negative effects for geriatric animals (β=-1.393, p<0.001).
+
+- **Model diagnostics:** Residual diagnostics indicated good fit (uniform distribution, p=0.908) with no multicollinearity concerns (all VIFs <1.63). Cook's distance identified 523 influential points, all representing adopted senior/geriatric animals. These constituted 100% of adopted cases in these age groups, thus age effects estimates were entirely dependent on these observations. This suggested to collapse the groups rather than eliminate the influential points completely.
+
+**Fit indices:** The model showed poor predictive performance with McFadden's R²=0.012 and AUC=0.563 and classification accuracy of 52.1%, barely better than chance. 
+
+**Next steps:** To address the influential points issue and improve model stability, I will merge senior and geriatric categories into a combined "Older" group and refit the model. I will repeat the same model analysis as in the case of this, first model. 
+
 
 
 ## Updated simple model (merging "geriatric" and "senior" age bins)
@@ -1210,11 +1284,13 @@ Cook’s distance analysis revealed influential observations (n = 523) concentra
 Merge levels:
 ```{r}
 lb_analysis_merged_age <- lb_analysis %>%
-  mutate(age_bins = fct_collapse(age_bins, "Senior" = c("Senior", "Geriatric")))
+  mutate(age_bins = fct_collapse(age_bins, "Older" = c("Senior", "Geriatric")))
+
+lb_analysis_merged_age %>%
+  count(age_bins, adopted)
 ```
 
-
-Construct new model:
+### Construct new model
 ```{r}
 lb_simple_merged_mdl <- glm(adopted ~ animal_type + sex + age_bins, 
                   data = lb_analysis_merged_age, family = binomial)
@@ -1223,11 +1299,6 @@ lb_simple_merged_mdl <- glm(adopted ~ animal_type + sex + age_bins,
 Check model summary:
 ```{r}
 summary(lb_simple_merged_mdl)
-```
-
-And model performance:
-```{r}
-model_performance(lb_simple_merged_mdl)
 ```
 
 
@@ -1239,15 +1310,19 @@ plot_model(lb_simple_merged_mdl, type = "pred", terms = c("age_bins", "animal_ty
 
 ### Checking assumptions
 
-Multicolinearity:
+```{r}
+check_model(lb_simple_merged_mdl)
+```
+
+**Multicolinearity:**
 ```{r}
 check_collinearity(lb_simple_merged_mdl)
 ```
 
-Influential points:
+**Influential points:**
 ```{r}
 # Leverage
-n_obs_2 = nrow(lb_analysis)
+n_obs_2 = nrow(lb_analysis_merged_age)
 params_2 = length(coef(lb_simple_merged_mdl)) - 1
 
 influential_lev_2 <- hatvalues(lb_simple_merged_mdl) >  2*(params_2+1)/n_obs_2
@@ -1258,144 +1333,379 @@ lb_simple_merged_mdl %>%
   mutate(high_leverage = ifelse(.hat > 2*(params_2+1)/n_obs_2, 1, 0)) %>%
   count(high_leverage)
 
-# OK so after merging age bins, there are no more influential points when leverage is considered.
+# After merging age bins, there are no more influential points when leverage is considered.
 
 # Cook's distance
 influential_cd_2 <- cooks.distance(lb_simple_merged_mdl) > 4 / n_obs_2
 sum(influential_cd_2) 
 sum(cooks.distance(lb_simple_merged_mdl) > 1)
-# We still have 523 influential points according to 4/n rule of thumb and 0 according to D > 1. However maxmimum Cook's distance decreased from about 0.002 to about 0.0005, so there was definitely some improvement after age bin merging. 
+# We still have 523 influential points according to 4/n rule of thumb and 0 according to D > 1. However maximum Cook's distance decreased from about 0.002 to about 0.0005, so there was definitely some improvement after age bin merging. 
 
+plot(lb_simple_merged_mdl, 4)
 ```
 
-Check residuals - here is where I ran into a bit of confusion that will probably take me some time to figure out, probably more time is needed than the deadline for the report. I was checking residuals in 2 ways, one with `check_residuals` and another with `binned residuals` (see both below). 
+**Check residuals**
+
+Here is where I ran into a bit of confusion that will probably take me some time to figure out, probably more time is needed than the deadline for the report. I was checking residuals in 2 ways, one with `check_residuals` and another with `binned residuals` (see both below). 
 
 Initial checks with check_residuals() indicated no major violations of model assumptions (quantile residuals followed expected uniform distribution, however this is NOT a requirement in any case, at least to my current knowledge). However, the binned residuals plot (binned_residuals()) showed poor fit, with only 31% of residuals within error bounds—suggesting localized prediction inaccuracies for certain subgroups. While tools like DHARMa (simulated residuals) were explored, the results (a gray-shaded plot with a straight red line) proved difficult to interpret given time constraints and my limited familiarity with advanced diagnostics. At this point I am not sure how to deal with this problem, so I think I will continue and be careful about interpretation of model results later on. 
 
 ```{r}
 check_residuals(lb_simple_merged_mdl)
 binned_residuals(lb_simple_merged_mdl)
-binned_residuals(lb_simple_merged_mdl, term = "animal_type")
-simulated_residuals <- simulateResiduals(lb_simple_merged_mdl)
-plot(simulated_residuals)
+
+simulated_residuals_simple_merged_mdl <- simulateResiduals(lb_simple_merged_mdl)
+plot(simulated_residuals_simple_merged_mdl)
 ```
 
-```{r}
-library(pROC)
+### Assessing model fit
 
+#### Preudo R-squared
+```{r}
+model_performance(lb_simple_merged_mdl)   # Focusing on Tjur's R2
+```
+
+
+#### ROC and AUC
+```{r}
 # Get predicted probabilities
-pred_probs <- predict(lb_simple_merged_mdl, type = "response")
+pred_probs_simple_merged_mdl <- predict(lb_simple_merged_mdl, type = "response")
 
 # Calculate ROC curve
-roc_curve <- roc(lb_analysis$adopted, pred_probs)
-plot(roc_curve)  # Visualize
-auc(roc_curve)   # Get AUC (0.5 = random, 1 = perfect)
+roc_curve_simple_merged_mdl <- roc(lb_analysis_merged_age$adopted, pred_probs_simple_merged_mdl)
+plot(roc_curve_simple_merged_mdl)  # Visualize
+auc(roc_curve_simple_merged_mdl)   
+```
+
+Extract threshold 
+```{r}
+lb_simple_merged_mdl_thresh <- coords(roc_curve_simple_merged_mdl, "best", ret = "threshold")
 ```
 
 
-
-
-
-
-
-## Complex model
-
+#### Confusion matrix for determining accuracy
 ```{r}
-lb_complex_mdl <- glm(adopted ~ animal_type + sex + age_bins + sterilised + intake_condition, 
-                  data = lb_analysis, family = binomial)
+lb_simple_merged_mdl_pred_binary <- ifelse(pred_probs_simple_merged_mdl > lb_simple_merged_mdl_thresh[[1]], "Yes", "No")
+
+lb_analysis_merged_age <- lb_analysis_merged_age %>%
+  mutate(adopted_str = ifelse(adopted == 0, "No", "Yes"))
 
 
+lb_simple_merged_mdl_conf_matrix <- confusionMatrix(factor(lb_simple_merged_mdl_pred_binary), factor(lb_analysis_merged_age$adopted_str))
+```
+
+
+#### All model fit indices:
+```{r}
+# Extract variables
+lb_simple_merged_mdl_pseudo_r2 <- round(model_performance(lb_simple_merged_mdl)[[4]], 4)
+lb_simple_merged_mdl_auc_val <- round(auc(roc_curve_simple_merged_mdl)[1],4)
+lb_simple_merged_mdl_accuracy <- round(lb_simple_merged_mdl_conf_matrix$overall["Accuracy"], 4)
+
+
+cat("Simple model (updated - grouped age bins) - Model Fit Summary:\n",
+    "---------------------------------\n",
+    sprintf("McFadden's Pseudo R²: %.3f\n", lb_simple_merged_mdl_pseudo_r2),
+    sprintf("AUC (ROC): %.3f\n", lb_simple_merged_mdl_auc_val),
+    sprintf("Accuracy: %.3f\n", lb_simple_merged_mdl_accuracy))
+```
+
+### Summary of updated simple model - merged senior and geriatric age bins
+
+Important thing to point out before proceeding to the complex model:
+
+- **Model summary:** The merged model (combining senior/geriatric into "Older") maintained the same significant predictors as the original: dogs showed higher adoption odds compared to cats (β=0.171 vs initial 0.168, p<0.001) while sex remained non-significant. The combined "Older" coefficient (β=-0.950) represents an "intermediate effect" between the original separate estimates for senior (β=-0.829) and geriatric (β=-1.393), so we can assume that merging age bins preserved the overall age trend.
+
+- **Model diagnostics:** Multicollinearity remained low (VIFs<1.63). The merged model showed improvement in influential points: maximum Cook's distance decreased 75% (0.002→0.0005), though 523 points still exceeded the 4/n threshold and 0 influential points were identified according to D > 1 threshold. Residual diagnostics were consistent between models - quatile residuals sugegst model structure adequacy (p>0.9) but localized misfit in binned residuals (only 31% within bounds), suggesting the problem with specific subgroups despite the age bin merging.
+
+- **Fit Indices Comparison:** No meaningful differences emerged in model performance:, identical McFadden's R² (0.012), identical AUC (0.563), identical accuracy (52.1%).
+
+This suggests the age bin merging addressed concerns about influential points without improving predictive power. Let's now continue to the complex model, where contextual factors, namely **sterilization status and intake condition** will be added.
+
+
+## Complex model - added contextual predictors 
+
+As mentioned several times before, while the simple model only considered animal-centered, native predictors like age, sex and type (dog vs. cat), we will introduce contextual predictors (sterilization status and intake condition) to the more complex model and investigate whether these predictors significantly improve model fit and predictive power - determining whether animal gets adopted or not. We will use the dataset with merged age bins for geriatric and senior. 
+
+### Construct the model 
+```{r}
+lb_complex_mdl <- glm(adopted ~ animal_type + sex + age_bins + sterilised + intake_condition, data = lb_analysis_merged_age, family = binomial)
+```
+
+Check model summary:
 ```{r}
 summary(lb_complex_mdl)
 ```
 
+
+### Visualize the model
+
+Visualization of 4 variables.
 ```{r}
-plot_model(lb_complex_mdl, type = "pred", terms = c("animal_type", "intake_condition", "age_bins", "sterilised [Yes]"))
+plot_model(lb_complex_mdl, type = "pred", terms = c("animal_type", "intake_condition", "age_bins", "sterilised")) + 
+  theme_minimal() + 
+  labs(x = NULL, y = "Adopted", title = "Predicted probabilities of adoption for dogs and cats, \nseparated by age, sterilization status and intake condition.", color = "Intake condition")
 ```
+We can see a significant difference between sterilized and non-sterilized panels, with much higher adoption probabilities for sterilized animals. 
+
+Let's now visualize only sterilized animals.
 ```{r}
-plot_model(lb_complex_mdl, type = "pred", terms = c("animal_type", "intake_condition", "age_bins", "sterilised"))
+plot_model(lb_complex_mdl, type = "pred", terms = c("animal_type", "intake_condition", "age_bins", "sterilised [Yes]")) + 
+  theme_minimal() + 
+  labs(x = NULL, y = "Adopted", title = "Predicted probabilities of adoption for dogs and cats, \nseparated by age, sterilization status and intake condition.", color = "Intake condition")
 ```
+From this graph we can identify the decrease in adoption rate for both dogs and cats across different age groups. Importantly, in all cases we see that severe physical condition (purple) has a noticeably lower adoption rate across all age groups for both animal types. While the model coefficients suggest significantly higher adoption rate of dogs compared to cats (β = 0.30594), this is less identifiable from the plot itself. 
 
 
+
+### Checking assumptions
 
 ```{r}
-r2(lb_complex_mdl)
 check_model(lb_complex_mdl)
-binned_residuals(lb_complex_mdl)
-
-library(DHARMa)
-simulated_residuals <- simulateResiduals(lb_complex_mdl)
-plot(simulated_residuals)
 ```
 
+**Multicolinearity:**
 ```{r}
-lb_simple_mdl %>%
+check_collinearity(lb_complex_mdl)
+```
+
+**Influential points:**
+```{r}
+# Leverage
+n_obs_3 = nrow(lb_analysis_merged_age)
+params_3 = length(coef(lb_complex_mdl)) - 1
+
+influential_lev_3 <- hatvalues(lb_complex_mdl) >  2*(params_3+1)/n_obs_3
+sum(influential_lev_3)
+
+lb_simple_merged_mdl %>%
   augment() %>%
-  arrange(desc(.cooksd)) %>%
-  mutate(cd_t = ifelse(.cooksd > 4/n(), "Influential", "Ok")) %>%
-  count(cd_t)
+  mutate(high_leverage = ifelse(.hat > 2*(params_2+1)/n_obs_2, 1, 0)) %>%
+  count(high_leverage)
 
-plot(lb_simple_mdl, which = 4)
-influence.measures(lb_simple_mdl)
-```
+# Uf, 1826 points are identified as influential according to leverage values threshold, however visual inspection above (check_model, plot Influential observations) suggest no such points. 
 
-Let's see what happens if we remove outliers.
+# Cook's distance
+influential_cd_3 <- cooks.distance(lb_complex_mdl) > 4 / n_obs_3
+sum(influential_cd_3) 
+sum(cooks.distance(lb_complex_mdl) > 1)
+# We have 1002 influential points according to 4/n rule of thumb and 0 according to D > 1. 
 
-```{r}
-# Check influential points
-influential <- cooks.distance(lb_simple_mdl) > 4 / nobs(lb_simple_mdl)
-sum(influential)  # ~500
+# Let take another look at this.
+plot(lb_complex_mdl, 4:6)
 
-lb_analysis %>%
-  filter(influential) %>%
+# Let's check age bins of influential points
+lb_analysis_merged_age %>%
+  filter(influential_cd_3) %>%
   count(age_bins)
 
-lb_analysis %>%
-  count(age_bins, intake_condition)
+# And intake conditions
+lb_analysis_merged_age %>%
+  filter(influential_cd_3) %>%
+  count(intake_condition)
 
-# Compare models
-simple_model_clean <- update(lb_simple_mdl, subset = !influential)
-summary(lb_simple_mdl)
-summary(simple_model_clean)
+# And sterilization status
+lb_analysis_merged_age %>%
+  filter(influential_cd_3) %>%
+  count(sterilised)
+```
+I do not identify any specific points that would really stand out from others. If we would decide to remove influential points according to leverage and Cooks'd distance, almost 5% of data should be remove, which would possibly lead to overfitting of the model. I decide to continue with the whole dataset, as from a contextual point of view all datapoints are biologically and contextually plausible. When checking distribution of influential points with respect to predictors, they are approximatelly equally distributed across levels of age bins, intake condition and sterilization status.
 
 
-plot_model(simple_model_clean, type = "pred")
-coef_diff  # Examine changes
+**Check residuals**
+
+I have a similar issue as before. While simulated residuals appear as uniformly distributed (`check_residuals` -> p = 0.619) (not a necessary condition in logistic regression), binned residuals suggest localized misfit (only 28% within the error bounds), indicating the problem with specific subgroups. I am assuming this pattern suggests that while the model’s overall framework is appropriate, it fails to capture nuanced relationships for specific predictor combinations, and probably stem from rarer outcomes (adoptions) in specific subgroups. Possibly, they might be resolved by introducing interaction terms. As explained in the previous section, my current knowledge is not sufficient to decide what actions should be taken to resolve this issue, or how relevant this is in the first place, so I will continue with the analysis as is. 
+
+```{r}
+check_residuals(lb_complex_mdl)
+binned_residuals(lb_complex_mdl)
+
+simulated_residuals_complex_mdl <- simulateResiduals(lb_complex_mdl)
+plot(simulated_residuals_complex_mdl)
 ```
 
 
+### Assessing model fit
+
+#### Preudo R-squared
+```{r}
+model_performance(lb_complex_mdl)   # Focusing on Tjur's R2
+```
+
+
+#### ROC and AUC
 ```{r}
 # Get predicted probabilities
-pred_probs <- predict(lb_complex_mdl, type = "response")
+pred_probs_complex_mdl <- predict(lb_complex_mdl, type = "response")
 
 # Calculate ROC curve
-roc_curve <- roc(lb_analysis$adopted, pred_probs)
-plot(roc_curve)  # Visualize
-auc(roc_curve)   # Get AUC (0.5 = random, 1 = perfect)
+roc_curve_complex_mdl <- roc(lb_analysis_merged_age$adopted, pred_probs_complex_mdl)
+plot(roc_curve_complex_mdl)  
+auc(roc_curve_complex_mdl)   
+```
+
+Extract threshold 
+```{r}
+lb_complex_mdl_thresh <- coords(roc_curve_complex_mdl, "best", ret = "threshold")
+```
+
+
+#### Confusion matrix for determining accuracy
+```{r}
+lb_complex_mdl_pred_binary <- ifelse(pred_probs_complex_mdl > lb_complex_mdl_thresh [[1]], "Yes", "No")
+
+lb_complex_mdl_conf_matrix <- confusionMatrix(factor(lb_complex_mdl_pred_binary), factor(lb_analysis_merged_age$adopted_str))
+```
+
+
+#### All model fit indices:
+```{r}
+# Extract variables
+lb_complex_mdl_pseudo_r2 <- round(model_performance(lb_complex_mdl)[[4]], 4)
+lb_complex_mdl_auc_val <- round(auc(roc_curve_complex_mdl)[1],4)
+lb_complex_mdl_accuracy <- round(lb_complex_mdl_conf_matrix$overall["Accuracy"], 4)
+
+# Nicely formatted output
+cat("Complex model - Model Fit Summary:\n",
+    "---------------------------------\n",
+    sprintf("McFadden's Pseudo R²: %.3f\n", lb_complex_mdl_pseudo_r2),
+    sprintf("AUC (ROC): %.3f\n", lb_complex_mdl_auc_val),
+    sprintf("Accuracy: %.3f\n", lb_complex_mdl_accuracy))
+```
+
+### Summary of the complex model
+
+Important things to point out, before proceeding to formal model comparison:
+
+- **Model summary:** The complex model shows sterilization status as the strongest predictor of adoption (β=2.69, p<0.001), followed by age effects, where older animals had substantially lower odds (β=-1.97, p<0.001) - the lowest of all age groups. Dogs showed higher adoption rate than cats (β=0.31, p<0.001). Severe physical conditions negatively impacted adoption (β=-0.83, p<0.001), most severely of all condition. Importantly, there was no significant difference between reference group (Normal condition) and mild physical condition. 
+
+- **Model Diagnostics:** Multicollinearity remains low (all VIFs <2.21). While formal thresholds identified many influential points (1,826 by leverage, 1,002 by Cook's distance), visual inspection showed no extreme outliers. These points were evenly distributed across predictor categories, suggesting they represent natural data variation. Residual diagnostics showed good global fit (uniform quantile residuals, p=0.619) but localized misfit in binned residuals (28% within bounds), possibly due to unmodeled interactions and/or low rate of adoption outcomes in smaller subgroups subgroups.
+
+- **Fit Indices:** The model demonstrates good predictive performance: McFadden's pseudo R2 was 0.288 (substantial improvement over null model); AUC: 0.820 (excellent discrimination); accuracy: 0.777 (significantly better than no-information rate 0.717, p<0.001). 
+
+While it is already becoming clear that there is a significant improvement in predictive power of the more complex model compared to a simple model, let's perform formal model comparison. 
+
+
+## Model comparisons
+
+Likelihood ratio test:
+```{r}
+lrt_test <- anova(lb_simple_merged_mdl, lb_complex_mdl)
+lrt_test
+```
+
+Other indices: 
+```{r}
+compare_performance(lb_simple_merged_mdl, lb_complex_mdl, rank = TRUE, verbose = TRUE)
+
+test_performance(lb_simple_merged_mdl, lb_complex_mdl)
 ```
 
 ```{r}
-# For the complex model
-lb_analysis_copy <- lb_analysis
-lb_analysis_copy$pred_prob <- predict(lb_complex_mdl, type = "response")
-ggplot(lb_analysis_copy, aes(x = pred_prob, y = adopted)) + 
-  geom_smooth(method = "loess") + 
-  labs(title = "Calibration Plot") + 
-  coord_fixed()
+model_comparison <- data.frame(
+  Model = c("Simple", "Complex"),
+  `LRT chi2` = c(NA, 5553.31),
+  `LRT p-value` = c(NA, "p < .001"),
+  pseudo.R2 = c(lb_simple_merged_mdl_pseudo_r2, lb_complex_mdl_pseudo_r2),
+  AIC = c(AIC(lb_simple_merged_mdl), AIC(lb_complex_mdl)),
+  AUC = c(lb_simple_merged_mdl_auc_val, lb_complex_mdl_auc_val),
+  Accuracy = c(lb_simple_merged_mdl_accuracy, lb_complex_mdl_accuracy)
+)
+model_comparison
+
+model_comparison %>%
+  kable(format = "html", digits = 3, align = c("l", rep("c", 5))) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = TRUE) %>%
+  add_header_above(c(" " = 1, "Likelihood Ratio Test" = 2, "Fit Indices" = 4)) %>%
+  column_spec(1, bold = TRUE) %>%
+  footnote(
+           number = c("AIC: Lower values indicate better fit",
+                     "AUC: Values >0.8 suggest excellent discrimination"))
 ```
 
+### Reporting model comparison 
+
+The complex model demonstrated substantially better performance across all metrics compared to the simple model. A likelihood ratio test confirmed the complex model's superior fit (χ²=5553.31, p<.001), with the additional predictors explaining 27.6% more variance (pseudo R²=0.288 vs 0.012). This improvement was reflected in the AIC reduction from 23,371 to 17,828, strongly favoring the complex model. Predictive performance also improved markedly, with AUC increasing from 0.563 (poor discrimination) to 0.820 (excellent discrimination), while accuracy rose from 52.1% to 77.7%. These results suggest that including sterilization status and intake condition alongside the basic predictors (animal type, sex, and age bins) provides a far more complete understanding of adoption patterns.
 
 
+## Final model summaries
 
+Final model estimates report will be provided here. So far I only inspected each model with `summary()` function, but let us now create a nice, comprehensive table and discuss the results of the models.
 
-### Model comparisons
-
+Log-odds:
 ```{r}
-anova(lb_simple_mdl, lb_complex_mdl)
-compare_performance(lb_simple_mdl, lb_complex_mdl, rank = TRUE, verbose = FALSE)
+tab_model(lb_simple_merged_mdl,lb_complex_mdl,
+          show.est = TRUE,
+          transform = NULL,
+          show.stat = TRUE,
+          show.aic = TRUE,
+          show.loglik = TRUE,
+          pred.labels = c(
+                "Intercept",
+                "Dogs (vs Cats)",
+                "Male (vs Female)",
+                "Young adult (vs Junior)",
+                "Mature adult (vs Junior)",
+                "Older (vs Junior)",
+                "Sterilized (vs Not)",
+                "Mild Condition (vs Normal)",
+                "Moderate Condition (vs Normal)",
+                "Severe Condition (vs Normal)",
+                "Underweight/Young (vs Normal)"),
+          dv.labels = c("Simple model - animal-focused factors", "Complex model - added contextual/intervention factors")
+          )
 ```
 
+Odds-ratios:
 ```{r}
-test_performance(lb_simple_mdl, lb_complex_mdl)
+tab_model(lb_simple_merged_mdl,lb_complex_mdl,
+          show.stat = TRUE,
+          show.aic = TRUE,
+          show.loglik = TRUE,
+          pred.labels = c(
+                "Intercept",
+                "Dogs (vs Cats)",
+                "Male (vs Female)",
+                "Young adult (vs Junior)",
+                "Mature adult (vs Junior)",
+                "Older (vs Junior)",
+                "Sterilized (vs Not)",
+                "Mild Condition (vs Normal)",
+                "Moderate Condition (vs Normal)",
+                "Severe Condition (vs Normal)",
+                "Underweight/Young (vs Normal)"),
+          dv.labels = c("Simple model - animal-focused factors", "Complex model - added contextual/intervention factors")
+          )
 ```
+
+I will focus on more complex model's coefficients in this interpretation section. Reference group of each predictor is listed in the parenthesis next to each level of the predictor variable (reference group was therefore a non-sterilized junior female cat taken in normal condition).
+
+All in all, present analysis reveals an interesting hierarchy of factors contributing to animal adoption. Sterilization status was identified as the most powerful predictor. Sterilized animals show an incredible 14.7-fold increase in adoption odds compared to unsterilized animals. This suggests that sterilization programs should be prioritized as a key intervention strategy for shelters in order to increase adoption rate of animals. The reference group — a non-sterilized junior female cat in normal health, has a baseline adoption probability of 13.8% (`plogis(-1.84)`). When this same animal is sterilized, its probability jumps to 70.1% (`plogis(-1.84 + 2.69)`). Another interesting example - while a non-sterilized *older* female cat in normal health has 2.2% probability of getting adopted (`plogis(-1.84 -1.97)`), sterilization increases probabilities up to 24.6% (`plogis(-1.84 -1.97 + 2.69 )`).
+
+Age exhibits a strong, gradual negative relationship with adoption likelihood, where older animals face vastly lower adoption rates - they have just 14% of the adoption odds of junior animals, while young and mature adults show intermediate but still reduced odds (36-37% of juveniles).
+
+Dogs show a moderate 36% advantage over cats in adoption odds. 
+
+Health conditions exhibited important differenecs: animals with severe medical issues experience less than half the adoption odds (44%) of normal/healthy animals, while those with moderate conditions or being under age/weight show smaller but significant reductions (20% and 19% lower odds respectively). Mild conditions, interestingly, show no statistically different effect on adoption rates. 
+
+
+
+# Final discussion
+
+If we consider initially formulated research question and hypothesis, this analysis revealed interesting findings. I aimed to determine whether contextual/intervention factors like sterilization status and intake condition could enhance predictions of animal adoption beyond basic biological traits, and the results provide support for this hypothesis. The complex model, incorporating these additional variables, demonstrated a significant improvement over the simple model, evidenced by a 27.6% increase in explained variance (Tjur’s R2: 0.012 → 0.288), a significant likelihood ratio test (χ²=5553.31, p<0.001), and a leap in predictive/descriminative power from poor to excellent (AUC: 0.56 → 0.82). 
+
+Sterilization emerged as the most important predictor, with sterilized animals experiencing a 14.7-fold increase in adoption odds. Health conditions further impacted outcomes, as severe physical ailments halved adoption odds (OR=0.44), while mild conditions had no detectable effect, suggesting adopters weigh major health concerns more heavily than minor ones. Significant age gradient was observed in complex model (as well as simple model), with older animals facing adoption deficits (OR=0.14 vs. juniors), underscoring the need for targeted interventions for this vulnerable group. 
+
+While the model’s overall performance is strong, the binned residuals’ localized misfit (28% within bounds) hints at unresolved nuances, possibly from unmodeled interactions or other, unfeatured variables. However, as mentioned several times throughout this document, my current knowledge and understanding of statistical methods did not allow me to address and investigate this issue further at this present moment. 
+
+It is highly important to emphasize, that only a few specific predictors were selected from the dataset and that featuring others might lead to further model fit improvement and predictive power. Such are for example color of the animal, but I decided to leave it out as it seems a highly subjective and consequently unsystematic factor. Additionally, I considered introducing intake condition, but our EDA revealed highly condensed data in the "stray" category, compared to others and based on this imbalance I decided to not feature it in the analysis. Even beyond this dataset, there are probably other factors, which greatly influence decision to adopt, but might be hard to determine quantitatively - a very frequent report (anecdotal) is that a person simply "knows" which animal to pick, as if they have some immediate connection, which is probably very difficult to explain verbally and potentially be categorized as a predictive variable. 
+
+To conclude, these findings collectively argue that shelters should prioritize sterilization programs as they seem to be significantly improving adoption outcomes. 
+
+
+
+
+
+
 
