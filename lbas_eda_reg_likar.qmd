@@ -1,22 +1,28 @@
 ---
-title: "Long Beach Animal Shelter - EDA"
+title: "Final report: Long Beach Animal Shelter - EDA (Statistical programming in R)"
 author: "Miha Likar"
-format: html
-html:
+format: 
+  html:
     toc: true
     toc-depth: 4
-    toc-expand: 1
+    toc-expand: 2
+    toc-collapse: true
     toc-title: "Contents"
+    css: styles.css
 editor: visual
 editor_options: 
   chunk_output_type: inline
 ---
 
-```{r}
+```{r setup}
+
+knitr::opts_chunk$set(echo = TRUE)
+
 library(tidyverse)
 library(ggplot2)
 library(scales)
 library(paletteer)
+library(ggpomological)
 library(treemapify)
 library(knitr)
 library(sjPlot)
@@ -37,9 +43,13 @@ The workflow and structure of this report is as follows:
 -   Brief introduction about the dataset and available variables
 -   Explore distributions of various single variables
 -   Explore associations between 2 and/or more variables
--   Impute certain variables based on the available data (age, reproductive status)
+-   Impute certain variables based on the available data (age, sterilization status)
 -   Clearly formulate RQ and Hs
--   Regression analysis (model comparison)
+-   Regression analysis and model comparison
+
+## Dataset
+
+Long Beach Animal Shelter dataset contains various variables about animals taken into the shelter between years 2017 and 2024. These variables provide information about animal characteristics (animal type, color, intake condition, intake type, sex, sterilization status etc.), dates (date of birth, intake date, outcome date) and shelter related information (jurisdiction, longitude, latitude). I will explore several of these variables and determine what should be of focus in my regression analysis.
 
 # Exploratory data analysis (EDA)
 
@@ -57,15 +67,14 @@ Let's look at the dataset, to see what we are working with.
 glimpse(longbeach_raw)
 ```
 
-There are several variables that already stand out as variables we want to primarily focus on in our EDA. These are:
+There are several variables that already stand out as variables I want to primarily focus on in EDA. These are:
 
--   `animal_type`
--   `sex`
--   `dob` + `intake_date`
--   `intake_condition`
--   `intake_type`
--   `outcome_date`
--   `outcome_type`
+-   `animal_type` - type of the animal (dog, cat, bird etc.)
+-   `sex` - sex of the animal and information about sterilization status
+-   `dob` + `intake_date` - date of birth and intake date - will be used to compute age of the animal
+-   `intake_condition` - in what health condition was animal taken into the shelter
+-   `intake_type` - what is the reason the animal was taken into the shelter (stray, owner surrender etc.)
+-   `outcome_type` - what was the outcome for the animal (adoption, euthanasia, transfer etc.)
 
 Before we proceed, let's factorize all the character variables. If we realize we need some of them in the numeric or character format later on, we can change this afterwards.
 
@@ -82,7 +91,7 @@ summary(longbeach)
 **Looking at the data, I notice a few things, that I should do, focus on:**
 
 -   `animal_type`: lump, investigate distribution.
--   `sex`: we can use this variable to infer both sex of the animal and "reproductive state" - whether animal was neutered/spayed, or it animal's reproductive functioning is intact. Ivestigate distribution.
+-   `sex`: we can use this variable to infer both sex of the animal and "sterilization status" - whether animal was neutered/spayed, or it animal's reproductive functioning is intact. Investigate distribution.
 -   Use `dob` (date of birth) and `intake_date` to compute age at intake. This might be useful for modeling later on, but initially look at the distribution.
 -   Investigate `intake_condition`. Probably categories will need lumping. Explore distribution.
 -   Investigate `intake_type`. Probably categories will need lumping. Explore distribution.
@@ -99,9 +108,9 @@ longbeach %>%
   count(animal_type)
 ```
 
-While it is possible that we would use lumping immediately to identify the most frequent animal types (either by fixed number of levels or proportion of the level vs. total count), we can also merge them manually based on reasoning and supporting *literature*.
+While it is possible that we would use lumping immediately to identify the most frequent animal types (either by fixed number of levels or proportion of the level vs. total count), we can also merge them manually based on reasoning and context.
 
-It was reasonable to expect that cats and dogs will be the most prevalent categories. They are followed by birds. Category wild follows and category other is tightly behind. It seems legitimate to keep these levels as they are at this point. Rabbits and guinea pigs could be collapsed into category "Small mammals". Reptiles and amphibians could be collapsed into "Exotic", a type frequently used by shelters, pet stores etc. Livestock can definitely be merged with other, considering the group size of the livestock.
+It was reasonable to expect that cats and dogs will be the most prevalent categories. They are followed by birds. Category "wild" follows and category "other" is tightly behind. It seems legitimate to keep these levels as they are at this point. Rabbits and guinea pigs could be collapsed into category "Small mammals". Reptiles and amphibians could be collapsed into "Exotic", a type frequently used by shelters, pet stores etc. Livestock can definitely be merged with other, considering the group size of the livestock.
 
 ```{r}
 longbeach <- longbeach %>%
@@ -116,20 +125,17 @@ longbeach <- longbeach %>%
 
 ```
 
-These are the categories that we will work with throughout EDA. I can anticipate that perhaps only dogs and cats will be features in the regression models due to significant discrepancy in sub-sample size of these two categories, compared to smaller ones such as birds, wildlife etc. Dataset documentation does not provide precise information about the group "Other". It is possible that various different species are included in this type.
+These are the categories that we will work with throughout EDA. I can anticipate that perhaps only dogs and cats will be features in the regression models due to significant discrepancy in sub-sample size of these two categories, compared to smaller ones such as birds, wildlife etc. Dataset documentation does not provide precise information about the group "Other". It is probable that various different species are included in this type.
 
 ```{r}
 longbeach %>% 
-  count(animal_type, sort = TRUE)
+  count(animal_type, sort = TRUE) %>%
+  kable(col.names = c("Animal type", "Number of animals"))
 ```
 
 We can use this variable for some basic distribution/count visualisation now.
 
 ```{r}
-library(jcolors)
-library(paletteer)
-library(ggpomological)
-
 longbeach %>% 
   count(animal_type) %>%
   mutate(animal_type = fct_reorder(animal_type, n)) %>% 
@@ -139,17 +145,10 @@ longbeach %>%
   coord_flip() + 
   labs(x = NULL, y = "Number of animals", title = "Number of animals taken in by animal type (Long Beach Animal Shelter, 2017–2024)", caption = "Small mammals include rabbits and guneia pigs. Exotic includes reptiles and amphibians.", fill = "Animal type") + 
   scale_y_continuous(breaks = seq(0,15000,2500)) + 
-  #scale_fill_brewer(palette = "Spectral", guide = guide_legend(reverse = TRUE)) +
-  #scale_fill_dutchmasters(palette = "milkmaid") + 
-  #scale_fill_pomological() + 
-  #scale_fill_paletteer_d("PrettyCols::Autumn") +
-  #scale_fill_jcolors(palette = "pal7") + 
   scale_fill_paletteer_d("ggthemes::Tableau_10") +
   theme(plot.title.position = "plot",
         plot.caption = element_text(hjust = -0.5),
         legend.position="none")
-# Consider removing the legend
-
 ```
 
 We can play around a little bit and try so called "lollipop" visualization, as it has been said to be a more modern, appealing version of bar charts.
@@ -174,11 +173,9 @@ longbeach %>%
 I want to play around with different visualizations a bit and thought that while bar chart might be very simple to read and informative for both an advanced as well as lay reader, I can try out treemaps.
 
 ```{r}
-library(treemapify)
-
 longbeach %>%
   count(animal_type) %>%
-  mutate(label_size = rescale(n, to = c(8, 60))) %>%  # scale size between 3 and 8
+  mutate(label_size = rescale(n, to = c(6, 55))) %>%  # scale size between 3 and 8
   ggplot(aes(area = n, fill = animal_type, label = paste0(animal_type, "\n", n))) +
   geom_treemap() +
   geom_treemap_text(aes(size = label_size), colour = "#474747", place = "centre", grow = FALSE) +
@@ -188,13 +185,14 @@ longbeach %>%
   theme_minimal() + 
   theme(plot.title.position = "plot",
         plot.caption = element_text(hjust = 0.05),
-        legend.position="none") +
-  coord_fixed(1)
+        legend.position="none"
+        ) 
+  #coord_fixed(1)
 ```
 
 Fine for now. We can always return to these graphs and polish the appearance. We can now apply the same logic to investigate other variables!
 
-###Intake condition
+### Intake condition
 
 Let's first check the levels of the variable `intake_condition` and their count, and consider possible lumping strategies.
 
@@ -219,7 +217,7 @@ longbeach %>%
 
 **Based on category inspection I decided the following:**
 
--   merge illness and injury in "physical" category
+-   Merge illness and injury in "physical" category
 -   I am also considering joining with behavioral (mild, moderate, severe) or collapsing these categories into "other" as the number of observations is really small
 -   There seem to be some specific smaller categories (aged, welfare seizures etc.), which will be collapsed into "other".
 
@@ -237,10 +235,11 @@ longbeach <- longbeach %>%
                                          other_level = "Other"))
 
 longbeach %>% 
-  count(intake_condition, sort = TRUE)
+  count(intake_condition, sort = TRUE) %>%
+  kable(col.names = c("Intake condition", "Number of animals"))
 ```
 
-First, I will specify colors associated with each category, so they remain the same throughout visualisations.
+First, I will specify colors associated with each category, so they remain the same throughout visualizations.
 
 ```{r}
 intake_colors <- c(
@@ -269,11 +268,10 @@ longbeach %>%
   theme(plot.title.position = "plot",
         plot.caption = element_text(hjust = -0.3),
         legend.position="none")
-# Consider removing the legend
 
 ```
 
-We can play around a little bit and try so called "lollipop" visualization, as it has been said to be a more modern, appealing version of bar charts.
+We can play around a little bit and try so called "lollipop" visualization.
 
 ```{r}
 longbeach %>% 
@@ -292,11 +290,9 @@ longbeach %>%
   scale_color_manual(values = intake_colors)
 ```
 
-I want to play around with different visualizations a bit and thought that while bar chart might be very simple to read and informative for both an advanced as well as lay reader, I can try out treemaps.
+Let's play around with treemap again a little bit.
 
 ```{r}
-library(treemapify)
-
 longbeach %>%
   count(intake_condition) %>%
   mutate(label_size = rescale(n, to = c(10, 40))) %>%  # scale size between 3 and 8
@@ -309,11 +305,10 @@ longbeach %>%
   theme_minimal() + 
   theme(plot.title.position = "plot",
         plot.caption = element_text(hjust = 0.05),
-        legend.position="none") +
-  coord_fixed(1)
+        legend.position="none")
 ```
 
-From these plots we can see that the majority of the animals taken into the Long Beach Animal Shelter are in normal physical condition. About half less is animals that are under age or under weight. This is roughly compared to all three categories of hindered physical condition combined \~ mild, moderate, severe. *At this point I start thinking that intake condition might be an interesting predictor in the regression models. At this point we can plot `animal_type` and `intake_condition` together and explore in what conditions are different animals usually taken into the shelter.*
+From these plots we can see that the majority of the animals taken into the Long Beach Animal Shelter are in normal physical condition. About half less is animals that are under age or under weight. This is roughly compared to all three categories of hindered physical condition combined - mild, moderate, severe. *At this point I start thinking that intake condition might be an interesting predictor in the regression models. At this point we can plot `animal_type` and `intake_condition` together and explore in what conditions are different animals usually taken into the shelter.*
 
 #### Combining animal type and intake condition
 
@@ -340,7 +335,7 @@ longbeach %>%
   scale_fill_manual(values = intake_colors, guide = guide_legend(reverse = TRUE))
 ```
 
-While this visualization is informative about absolute number of observations of each intake condition for different animal types. We again see that cats, followed by dogs dominate in overall number of intakes. Interesting observation is that there is quite a large proportion of cats taken in under-aged or under-weight condition. Majority of dogs on the other hand appear to be accepted in normal condition. It might also be good to visualize proportions within each group, to get an insight into more specific between-animal type differences, that might remain hidden in column-plotting with huge number of observations between the groups.
+This visualization is informative about absolute number of observations of each intake condition for different animal types. We again see that cats, followed by dogs dominate in overall number of intakes. Interesting observation is that there is quite a large proportion of cats taken in under-aged or under-weight condition. Majority of dogs on the other hand appear to be accepted in normal condition. It might also be good to visualize proportions within each group, to get an insight into more specific between-animal type differences, that might remain hidden in column-plotting with noticeable differences in total number of observations between the groups.
 
 ```{r}
 longbeach %>% 
@@ -414,12 +409,12 @@ longbeach %>%
   scale_fill_manual(values = intake_colors, guide = guide_legend(reverse = TRUE))
 ```
 
-Considering this visualisation, there are few things we can think about:
+**Considering this visualization, there are few things we can think about:**
 
 -   It seems that exotic animals and small mammals usually arrive/are accepted in normal condition. Possibly as they might escape from home for a short while and are registered into the system upon arrival, however owners potentially pick them up soon. Thus these are not animals that would linger the streets for a long time.
 -   Dogs are admitted to the shelter in normal condition much more frequently compared to cats.
--   However, cats have really high proportion of under-aged or under-weight intakes. It is possible, that stray cats give birth prematurely more often compared to dogs. On the other hand, it is possible that survival on the streets is the hardest for cats, thus leaving a lot of members of the stray cat community under-fed and under-weight.
--   Birds and wildlife have high proportion of (severe) physical conditions. Perhaps a lot of members of these groups arrive to the shelter because of the injury in the first place. It is possible that wild animals roam into urban environment or that birds have all sorts of accidents and are then injured brought to the shelter by members of the community or taken in by members of the shelter.
+-   Cats have a really high proportion of under-aged or under-weight intakes. It is possible, that stray cats give birth prematurely more often compared to dogs. On the other hand, it is possible that survival on the streets is the hardest for cats, thus leaving a lot of members of the stray cat community under-fed and under-weight.
+-   Birds and wildlife have high proportion of (severe) physical conditions. Perhaps a lot of members of these groups arrive to the shelter because of the injury in the first place. It is possible that wild animals roam into urban environment or that birds have all sorts of accidents and are then brought to the shelter in injured condition by the members of the community or taken in by members of the shelter.
 
 ### Intake type
 
@@ -427,10 +422,11 @@ Based on the points raised in the end of the previous section, we can consider l
 
 ```{r}
 longbeach %>% 
-  count(intake_type, sort = TRUE)
+  count(intake_type, sort = TRUE) %>%
+  kable(col.names = c("Intake type", "Number of animals"))
 ```
 
-Majority of the animals are either stray or come from wildlife, and a noticeable proportion of animals being surrendered by the owner. Due to highly unbalanced groups, I will not explore this variable for now, will just check the count for each type of intake for different types of animals and visualize it.
+Majority of the animals are either stray or come from wildlife, and a noticeable number of animals being surrendered by the owner. Due to highly unbalanced groups, I will not explore this variable in depths for now, will just check the count for each type of intake for different types of animals and visualize it.
 
 ```{r}
 longbeach %>%
@@ -440,8 +436,8 @@ longbeach %>%
   ggplot() + 
   aes(animal_type, n, fill = intake_type) %>%
   geom_col(position = "fill") + 
-  #geom_col() + 
   theme_minimal() + 
+  scale_y_continuous(labels = label_percent()) + 
   labs(y = "Proportion of animals", x = "Animal type", fill = "Intake type", title = "Proportion of animals by different intake types for each type of animal \n(Long Beach Animal Shelter, 2017–2024)") + 
   scale_fill_paletteer_d("ggthemes::Classic_Green_Orange_12")
 ```
@@ -450,14 +446,15 @@ Majority of dogs and cats in particular are stray animals and a noticeable perce
 
 ### Sex
 
-Let's now proceed with the `sex` variable. During initial data inspection, I noticed that there are not only sex information, but also whether animal was neutered/spayed and is thus not sexually active/capable of reproduction anymore. As I am still seriously considering modeling adoption rate in regression models, this information might be valuable. Let's first look into the variable, mutate it and visualize.
+Let's now proceed with the `sex` variable. During initial data inspection, I noticed that there are not only sex information, but also whether animal was neutered/spayed (sterilized) and is thus not sexually active/capable of reproduction anymore. As I am seriously considering modeling adoption rate in regression models, this information might be valuable. Let's first look into the variable, mutate it and visualize.
 
 ```{r}
 longbeach %>%
-  count(sex)
+  count(sex) %>%
+  kable(col.names = c("Sex", "Number of animals"))
 ```
 
-OK, I will leave category Unknown as it is. Then, I will split the original `sex` variable into two, one about sex and one about reproductive state. From the meaning of the words, we can infer then when the condition is "Neutered" it refers to the male, and when the condition is "Spayed", it refers to the females. After looking into online forum discussion and consulting various AIs, I concluded that when reproductive status is listed, we can infer the sex. When it is not, we can conclude that the reproductive state is intact and biological sex is listed.
+OK, I will leave category Unknown as it is. Then, I will split the original `sex` variable into two, one about sex and one about sterilization status. From the meaning of the words, we can infer then when the condition is "Neutered" it refers to the male, and when the condition is "Spayed", it refers to the females. After looking into online forum discussion and "consulting" various AIs, I concluded that when reproductive status is listed, we can infer the sex. When it is not, we can conclude that the reproductive state is intact and biological sex is listed.
 
 Based on this I will create binary variable `starilised`, which will be 1 if current `sex` is "Spayed" or "Neutered" and 0 if biological sex is listed. I will recode values in the original `sex` category to only include information about biological sex.
 
@@ -473,8 +470,9 @@ longbeach %>%
   count(sex, sterilised) %>%
   ggplot() +
   aes(sex, n, fill = sterilised) + 
-  geom_col(position = "dodge") +
-  #geom_col(position = "fill") + 
+  #geom_col(position = "dodge") +
+  geom_col(position = "fill") + 
+  scale_y_continuous(labels = label_percent()) + 
   labs(x = "Sex", y = "Number of animals", fill = "Sterilised", title = "NUmber of sterilised and unstarilised animals by sex \n(Long Beach Animal Shelter, 2017–2024)") + 
   theme_minimal() + 
   scale_fill_pomological() 
@@ -482,12 +480,13 @@ longbeach %>%
 
 ```{r}
 longbeach %>%
-  count(sex, sterilised)
+  count(sex, sterilised) %>%
+  kable(col.names = c("Sex", "Sterilised", "Number of animals"))
 ```
 
-Using the proportion graph, we can see that approximately equal proportion (\~43%) of both biological sexes is sterilized. From the count/column graph, we can see that males are more frequently taken in at the animal shelter. 6352 animals have unknown sex and/or sterilization status.
+Using the proportion graph, we can see that approximately equal proportion (cca. 43%) of both biological sexes is sterilized. From the count/column graph, we can see that males are more frequently taken in at the animal shelter. 6352 animals have unknown sex and/or sterilization status.
 
-At this point we could plot `sex` and `sterilisation` in assocation with previously handled variables - `intake_condition` and `animal_type`. I will select only one at this point and then mode on to other variables. I choose `animal_type` to see whether animals, especially the most frequent ones, differ in their sterilization rate and sex. I will focus on proportions, as we have clearly established thus far that dogs and cats are by far the most dominant animal types and visualization of other types besides them is much more informative in proportions.
+At this point we could plot `sex` and `sterilisation` in association with previously handled variables - `intake_condition` and `animal_type`. I will select only one at this point and then move on to the other variables. I choose `animal_type` to see whether animals, especially the most frequent ones, differ in their sterilization rate and sex. I will focus on proportions, as we have clearly established thus far that dogs and cats are by far the most dominant animal types and visualization of other types besides them is much more informative in proportions.
 
 ```{r}
 longbeach %>%
@@ -496,12 +495,13 @@ longbeach %>%
   aes(animal_type, n, fill = sex) %>%
   geom_col(position = "fill") + 
   #geom_col() + 
+  scale_y_continuous(labels = label_percent()) + 
   theme_minimal() + 
   labs(y = "Proportion of animals", x = "Animal type", fill = "Sex", title = "Proportion of different sexes for each type of animal \n(Long Beach Animal Shelter, 2017–2024)") + 
   scale_fill_pomological()
 ```
 
-We can see that in exotic animals, birds, wildlife and others, very high proportion of those groups have unknown sex. It seems reasonable to assume that this could happen due to accurate genitalia identification is much more difficult to do in these groups, compared to cats, dogs and small mammals. In those groups, male and female sex appear to be approximately balanced. About 10% of cats and small mammals have unknown sex. About 60% of dogs are males and the rest are mostly females and unknown representatives in very small percentage.
+We can see that in exotic animals, birds, wildlife and others, very high proportion of those groups have unknown sex. It seems reasonable to assume that this could happen due to accurate genitalia identification being much more difficult in these groups, compared to cats, dogs and small mammals. In those groups, male and female sex appear to be approximately balanced. About 10% of cats and small mammals have unknown sex. About 60% of dogs are males and the rest are mostly females and unknown representatives in very small percentage.
 
 Let's look at `sterilised`.
 
@@ -512,6 +512,7 @@ longbeach %>%
   aes(animal_type, n, fill = sterilised) %>%
   geom_col(position = "fill") + 
   #geom_col() + 
+  scale_y_continuous(labels = label_percent()) + 
   theme_minimal() + 
   labs(y = "Proportion of animals", x = "Animal type", fill = "Sterilised", title = "Proportion of sterilised individuals for each type of animal \n(Long Beach Animal Shelter, 2017–2024)") +
   scale_fill_pomological()
@@ -519,11 +520,7 @@ longbeach %>%
 
 High percentage of individuals with unknown sterilization status in exotic, birds, wildlife and other could be expected. We have seen in previous analysis that a noticeable proportion of those animals are wild animals, thus there is probably no record kept about their sterilization status. Additionally, as mentioned before identification of genitalia and related markers is much more difficult in these species. For cats, dogs and small mammals, sterilization rate is around 40-50%. We can infer some information from this.
 
-If animals have already been taken to a shelter before, they were most likely sterilized, as this is a standard procedure during the capture and stay. While approximately a half of the animals therefore seem to have been captured before, or surrendered/escaped by/from the owner, who put them through the procedure, about the half of these animals have not been sterilized, implying this is their first time in the shelter and are arguably very young. I could explore this further by creating tile plots with `intake_type` and count on axes, and `sterilisation` as fill, faceted for animal types. It would also be possible to perform statistical tests (chi-square) to investigate whether there are significant differences in sterilized vs. unsterilized individuals among different intake or animal types.
-
-```{r}
-summary(longbeach)
-```
+If animals have already been taken to a shelter before, they were most likely sterilized, as this is a standard procedure during the capture and stay. While approximately a half of the animals therefore seem to have been captured before, or surrendered/escaped by/from the owner, who put them through the procedure, about the half of these animals have not been sterilized, implying this is their first time in the shelter and are arguably very young.
 
 *in case data is overwritten, copy here*
 
@@ -536,7 +533,7 @@ summary(longbeach)
 
 I will proceed to the next variable, `outcome_type`. Let's see what are the levels of the variable and how we could collapse, lump them.
 
-I decide for keeping all the outcomes that are at least 2.5% of the complete sample and lump others. in case of condition "shelter, neuter, return" I am not completely sure what it means as different webpages have different interpretations depending on the context. I will therefore collapse this category with "others".
+I decide for keeping all the outcomes that are at least 2.5% of the complete sample and lump others. In case of condition "shelter, neuter, return" I am not completely sure what it means as different webpages have different interpretations depending on the context. I will therefore collapse this category with "others".
 
 ```{r}
 longbeach <- longbeach %>% 
@@ -552,10 +549,12 @@ longbeach <- longbeach %>%
                                      
 
 longbeach %>%
-  count(outcome_type, sort = TRUE)
+  count(outcome_type, sort = TRUE) %>%
+  drop_na() %>%
+  kable(col.names = c("Outcome type", "Number of animals"))
 ```
 
-Let's now create a column `adopted`. It will be "Yes" in case of outcome type "adoption" and "No" for all the other outcome types. **At this point, I remove 187 rows from the dataset, as they hame missing values for `outcome_type`.**
+Let's now create a column `adopted`. It will be "Yes" in case of outcome type "adoption" and "No" for all the other outcome types. **At this point, I remove 187 rows from the dataset, as they have missing values for `outcome_type`.**
 
 ```{r}
 longbeach <- longbeach %>%
@@ -565,12 +564,15 @@ longbeach <- longbeach %>%
 
 longbeach <- longbeach %>%
   relocate(adopted, .after = "outcome_type")
+
+longbeach %>%
+  count(adopted) %>%
+  kable(col.names = c("Adopted", "Number of animals"))
 ```
 
-Let's also create a binary + other category `outcome_type_posneg` where we will collapse `outcome_type` into positive if animal survived, negative if it did not and other for other level(s).
+Let's also create a binary (+ "other") category `outcome_type_posneg` where we will collapse `outcome_type` into positive if animal survived, negative if it did not and other for other level(s).
 
 ```{r}
-
 longbeach <- longbeach %>%
   mutate(outcome_type_posneg = fct_collapse(outcome_type,
                                      Positive = c("Adoption", "Rescue", "Return to owner", "Transfer"),
@@ -603,16 +605,10 @@ longbeach %>%
   theme_minimal() + 
   coord_flip() + 
   labs(x = "Outcome type", y = "Number of animals", title = "Number of animals by outcome type (Long Beach Animal Shelter, 2017–2024)", fill = "Outcome type") + 
-  #scale_y_continuous(breaks = seq(0,15000,2500)) + 
-  #scale_fill_brewer(palette = "Spectral", guide = guide_legend(reverse = TRUE)) +
-  #scale_fill_dutchmasters(palette = "milkmaid") + 
-  #scale_fill_pomological() + 
-  #scale_fill_paletteer_d("PrettyCols::Autumn") +
   scale_fill_manual(values = outcome_type_posneg_colors) +
   theme(plot.title.position = "plot",
         plot.caption = element_text(hjust = -0.3),
         legend.position="none")
-# Consider removing the legend
 ```
 
 This could be a nice lollipop plot!
@@ -692,7 +688,7 @@ longbeach %>%
   geom_col(position = "fill") + 
   coord_flip() + 
   theme_minimal() + 
-  labs(x = "Animal type", y = "Proportion of animals with a certain outcome (%)", fill = "Outcome type", title = "Proportions of different outcomes for different animal types (Long Beach Animal Shelter, 2017–2024") + 
+  labs(x = "Animal type", y = "Proportion of animals with a certain outcome (%)", fill = "Outcome type", title = "Proportions of different outcomes for different animal types \n(Long Beach Animal Shelter, 2017–2024)") + 
   scale_y_continuous(
   labels = label_percent(), 
   breaks = seq(0, 1, 0.2),
@@ -703,13 +699,13 @@ longbeach %>%
   scale_fill_manual(values = outcome_type_colors, guide = guide_legend(reverse = TRUE))
 ```
 
-There are a few things we can conclude from this visualization. Small mammals have the highest proportion of adoptions, followed closely by dogs and cats. While a insignificant proportion of cats is returned to the owners, situation is different for dogs. About 30% of dogs are returned to their owner. It is possible that a significant percentage of stray dogs have escaped their home and were roaming free for a while and then returned to their owner. On the other hand it is possible that much lower proportion of stray cats have escaped their home recently, but are actually street-based animals. Overall, proportion of animals euthanized is about 2.5x higher for cats than for dogs. Highest proportion of euthanasia in a specific animal type is in wildlife (\~60%) and animals classified as "other"(\~50%). We have speculated in the previous chapters that wildlife animals perhaps end up in the shelter more frequently because of their high rate of moderate and severe injuries (50-55% combined; reported in section "Combining animal type and intake condition"). It is possible that if big proportion of these animals cannot get better, be healed, they highly likely end up euthanized instead of returned to natural habitat.
+There are a few things we can conclude from this visualization. Small mammals have the highest proportion of adoptions, followed closely by dogs and cats. While a insignificant proportion of cats is returned to the owners, situation is different for dogs. About 30% of dogs are returned to their owner. It is possible that a significant percentage of stray dogs have escaped their home and were roaming free for a while and then returned to their owner. On the other hand it is possible that much lower proportion of stray cats have escaped their home recently, but are actually street-based animals. Overall, proportion of animals euthanized is about 2.5x higher for cats than for dogs. Highest proportion of euthanasia in a specific animal type is in wildlife (cca. 60%) and animals classified as "other" (cca. 50%). I have speculated in the previous sections that wildlife animals perhaps end up in the shelter more frequently because of their high rate of moderate and severe injuries (50-55% combined; reported in section "Combining animal type and intake condition"). It is possible that if big proportion of these animals cannot get better, be healed, they highly likely end up euthanized instead of returned to natural habitat.
 
 While positive outcomes (bar segments in green) are about 90% for dogs, 80% for small mammals, 80% for exotic animals, 65% for cats and slightly above 60% for birds, wildlife animals and others are more likely to result in a negative outcome (55% for others, 65% for wildlife).
 
 #### Intake condition vs. outcome type
 
-I will now repeat the same procedure as in the previous section to invastigate possible associations between intake condition and outcome type. With this, we will be able to get some information whether the condition in which the animal is taken into the shelter can give the caretakers any approximation about the most likely outcome for that animal.
+I will now repeat the same procedure as in the previous section to investigate possible associations between intake condition and outcome type. With this, we will be able to get some information whether the condition in which the animal is taken into the shelter can give the caretakers any approximation about the most likely outcome for that animal.
 
 ```{r}
 longbeach %>%
@@ -734,7 +730,7 @@ longbeach %>%
   geom_col(position = "fill") + 
   coord_flip() + 
   theme_minimal() + 
-  labs(x = "Intake", y = "Proportion of animals (%)", fill = "Outcome type", title = "Proportions of specific outcome for different intake conditions (Long Beach Animal Shelter, 2017–2024)") + 
+  labs(x = "Intake condition", y = "Proportion of animals (%)", fill = "Outcome type", title = "Proportions of specific outcome for different intake conditions \n(Long Beach Animal Shelter, 2017–2024)") + 
   scale_y_continuous(
   labels = label_percent(), 
   breaks = seq(0, 1, 0.2),
@@ -747,7 +743,7 @@ longbeach %>%
 
 From this plot we can see that intake condition is associated with the outcome. Almost 90% of animals taken in in normal condition are likely to face a positive outcome, meaning they will stay alive and either get adopted, returned to their owner or be transferred to another rescue or shelter facility. With increase in severity of physical condition, the chances of positive outcome decrease, with about 70% positive outcomes for under-age and/or under-weight animals, and those with mild physical condition. About 55% of animals in moderate physical condition will face a positive outcome and this proportion drops to about 25% for severely injured of ill animals.
 
-**NOTE:** Before proceeding, I will remove category "Other" from `animal_type` and `intake_condition`, to avoid repeating it within every pipeline. 
+**NOTE:** Before proceeding, I will remove category "Other" from `animal_type` and `intake_condition`, to avoid repeating it within every pipeline.
 
 ```{r}
 # In case copy of longbeach is needed in the future - before filtering animal_type and intake_condition for "Others"
@@ -757,17 +753,17 @@ From this plot we can see that intake condition is associated with the outcome. 
 ```
 
 Filter:
+
 ```{r}
 longbeach <- longbeach %>% 
   filter(intake_condition != "Other" & animal_type != "Other")
 ```
 
-
 #### Animal type vs. intake condition vs. outcome type
 
 Let's now connect all three variables in a tile plot. I will plot animal type against intake condition and use gradient of the tiles to show what is the percentage of positive vs negative outcome. We will not use specific `outcome_type` categories, but return to the variable `outcome_type_posneg`. As a reminder, we collapsed `outcome_type` categories into positive outcome if animal survived, negative if it did not and other for other level(s). Positive outcomes correspond with green segments and negative outcomes with red in previous graphs in this section.
 
-Note: proportion was calculated as positive / positive + negative + other. Therefore it is crucial to notice that proportional graphs tell us about proportion of positive outcomes compared to negative and other outcomes, not just negative. Other outcomes are significantly lower in count compared to negative however
+Note: proportion was calculated as `positive / (positive + negative + other)`. Therefore it is crucial to notice that proportional graphs tell us about proportion of positive outcomes compared to negative and other outcomes, not just negative.
 
 ```{r}
 longbeach %>% 
@@ -807,7 +803,7 @@ longbeach %>%
   scale_fill_gradientn(
     colors = c("#e76254", "#ef8a48", "#fbd587", "white","#d3f2a3", "#90d890", "#4c9b82"),
     labels = scales::label_percent(scale = 1)) +
-  labs(x = NULL, y = "Intake condition of the animal", title = "Positive outcome proportion for each animal type and intake condition (Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of positive outcomes for that intake condition in each animal type.\nNumber in paranthesis is total number of individuals from that animal type with specific intake condition.", fill = "Positive outcome rate \n") + 
+  labs(x = NULL, y = "Intake condition of the animal", title = "Positive outcome proportion for each animal type and intake condition \n(Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of positive outcomes for that intake condition in each animal type.\nNumber in paranthesis is total number of individuals from that animal type with specific intake condition.", fill = "Positive outcome rate \n") + 
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
     plot.title.position = "plot",
@@ -816,11 +812,6 @@ longbeach %>%
 ```
 
 There are several important pieces of information we can gather from this plot. First thing to highlight is that across different animal types we can see decrease in positive outcome proportion between mild and severe physical conditions, as gradient goes from greenish to reddish colors. This is especially noticeable in cats, dogs and small mammals. However, it seems that physical conditions have a more pronounced effect in cats compared to dogs. Generally a lower proportion of positive outcomes is observed across different physical conditions for cats compared to dogs. In general, dogs appear to have the highest positive outcome rate, as more than 50% positive outcomes are expected across all conditions except severe physical. On the other hand, wildlife animals face a positive outcome less than 50% of time across all intake conditions, as indicated by dominantly orange-red colored tiles.
-
-```{r}
-longbeach %>% 
-  count(animal_type)
-```
 
 Let's now repeat this whole section, using adoption instead of broader outcome types.
 
@@ -866,7 +857,7 @@ longbeach %>%
     colors = c("#e76254", "#ef8a48", "white","#d3f2a3", "#90d890", "#4c9b82"),
     labels = scales::label_percent(scale = 1)) +
   #coord_fixed() + 
-  labs(x = NULL, y = "Intake condition of the animal", title = "Adoption rate for each animal type and intake condition (Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of adoptions for that intake condition in each animal type.\nNumbers in paranthesis are total number of individuals from that animal type with specific intake condition.", fill = "Adoption rate") + 
+  labs(x = NULL, y = "Intake condition of the animal", title = "Adoption rate for each animal type and intake condition \n(Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of adoptions for that intake condition in each animal type.\nNumbers in paranthesis are total number of individuals from that animal type with specific intake condition.", fill = "Adoption rate") + 
   theme_minimal() +
   coord_flip() +  
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
@@ -874,16 +865,14 @@ longbeach %>%
     plot.caption = element_text(hjust = 0))
 ```
 
-Similarly to the previous plot, this one reveals several interesting details about how intake condition is associated with adoption rate in different animal types. Highest rates of adoptions are in normal and mildly physically compromised cats and small mammals. This is followed by normal and mildly physically compromised dogs. We can see a severe decrease in adoption rate from mild to severe physical condition in dogs and cats. In all groups with the exception of cats, under-age and under-weight animals seem to have little to no chances of getting adopted. This suggest that potential future owners possibly believe that raising such an animal will be very difficult, or possibly shelters do not offer these animals for adoption as often. Though in the section "Intake condition vs. outcome type" we could see that about 15% of under-age and/or under-weight animals get adopted. It is possible that majority of those animals are cats, as we can see in this plot tat about 20% of under-age and/or under-weight cats get adopted. As we have seen in the section "Animal type vs. outcome type", no wildilfe animals get adopted. Birds have a similarly low rate with a few exceptions in compromised groups and 26 normal individuals getting adopted. Adoption rates are small for exotic animals as well, as only 11 normal and 1 per each physically compromised category were adopted.
+Similarly to the previous plot, this one reveals several interesting details about how intake condition is associated with adoption rate in different animal types. Highest rates of adoptions are in normal and mildly physically compromised cats and small mammals. This is followed by normal and mildly physically compromised dogs. We can see a severe decrease in adoption rate from mild to severe physical condition in dogs and cats. In all groups with the exception of cats, under-age and under-weight animals seem to have little to no chances of getting adopted. This suggest that potential future owners possibly believe that raising such an animal will be very difficult, or possibly shelters do not offer these animals for adoption as often. Though in the section "Intake condition vs. outcome type" we could see that about 15% of under-age and/or under-weight animals get adopted. It is possible that majority of those animals are cats, as we can see in this plot that about 20% of under-age and/or under-weight cats get adopted. As we have seen in the section "Animal type vs. outcome type", no wildilfe animals get adopted. Birds have a similarly low rate with a few exceptions in compromised groups and 26 normal individuals getting adopted. Adoption rates are small for exotic animals as well, as only 11 normal and 1 per each physically compromised category were adopted.
 
-Overall, there seems to be more of a binary difference in animal type trends, as cats, dogs and small mammals have adoption rates close to 25-30% percent. On the other hand, other groups share similarly low adoption rate at maximum 5%. Intake conditions exhibit more stepwise (linearly) decreasing rates from normal to most severely physically compromised group. Importantly however, mildly injured animals, especially cats and dogs show higher adoption rates compared to under-age and -weight group. This could be due to fewer offerings of these animals by shelter. On the other hand potential adopters might believe that it is easier to help get mildly compromised animal better, than to take care of under-age or -weight individual in the long run.
+Overall, there seems to be more of a binary difference in animal type trends, as cats, dogs and small mammals have adoption rates close to 25-30% percent. On the other hand, other groups share similarly low adoption rate at maximum 5%. Intake conditions exhibit more gradually decreasing rates from normal to most severely physically compromised group. Importantly however, mildly injured animals, especially cats and dogs show higher adoption rates compared to under-age and -weight group. This could be due to fewer offerings of these animals by shelter. On the other hand potential adopters might believe that it is easier to help get mildly compromised animal better, than to take care of under-age or -weight individual in the long run.
 
+Ok, let's try to improve the plot by adding some information and kind of having a table and visual representation in the same plot.
 
-///////
+Prepare:
 
-Ok, let's try to improve the plot and then separately create the table, so that the plot is not oversaturated with information. 
-
-Plot
 ```{r}
 # Prepare the order of the levels according tow hat we want in the final plot - animal names sorted by total number and conditions by severity
 
@@ -913,8 +902,8 @@ animal_type_pcts_labels <- rev(c("Cats\n(25.2%)","Dogs\n(26.7%)" ,"Small mammals
 
 ```
 
-
 Plot:
+
 ```{r}
 # calculate adoption proportions for every animal type
 animal_type_adoption_pcts <- longbeach %>% 
@@ -962,7 +951,7 @@ longbeach %>%
   scale_fill_gradientn(
     colors = c("#e76254", "#ef8a48", "white","#d3f2a3", "#90d890", "#4c9b82"),
     labels = scales::label_percent(scale = 1)) +
-  labs(x = NULL, y = NULL, title = "Adoption rate for each animal type and intake condition (Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of adoptions for that intake condition in each animal type.\nNumbers in paranthesis are total number of individuals from that animal type with specific intake condition.", fill = "Adoption rate") + 
+  labs(x = NULL, y = NULL, title = "Adoption rate for each animal type and intake condition \n(Long Beach Animal Shelter, 2017–2024)", subtitle = "Numbers on tiles represent total number of adoptions for that intake condition \nin each animal type.\nNumbers in paranthesis are total number of individuals from that animal type \nwith specific intake condition.", fill = "Adoption rate") + 
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
     plot.title.position = "plot",
@@ -971,18 +960,11 @@ longbeach %>%
   theme(aspect.ratio = 0.66)
 ```
 
-
-Table:
-```{r}
-# Maybe not needed since previous graphs includes both image info and text......will think about it. 
-```
-
-
 ### Age
 
 Let's now focus on the only continuous variable that I am planning to use in the analysis. Let's first check the type of variable and if there are any false data entry points.
+
 ```{r}
-summary(longbeach)
 # As dob and intake_date are now "double", we have to change them to date variables
 longbeach <- longbeach %>%
   mutate(dob = as.Date(dob),
@@ -1003,6 +985,7 @@ longbeach %>%
 ```
 
 We can now use `dob` and `intake_date` to calculate the age on an animal at intake, which I will use later on in the regression models.
+
 ```{r}
 longbeach %>%
   mutate(Age = ifelse(is.na(dob), NA, intake_date-dob)) %>%
@@ -1013,8 +996,8 @@ longbeach %>%
   scale_x_log10() + 
   theme_minimal() + 
   labs(x = "Age in days (log transformed)", y = "Number of animals", title = "Adoption outcomes per age on an animal \n(Long Beach Animal Shelter, 2017–2024)", fill = "Adopted")
-  #facet_wrap(~adopted)
 ```
+
 ```{r}
 longbeach %>%
   mutate(Age = as.numeric(intake_date - dob)) %>%
@@ -1027,7 +1010,6 @@ longbeach %>%
   theme_minimal() + 
   scale_x_log10() 
 ```
-
 
 ```{r}
 longbeach %>%
@@ -1044,18 +1026,15 @@ longbeach %>%
   facet_wrap(~animal_type)
 ```
 
-Huh, alright. At this point I have to decide how to continue with this variable. I see two options - one is log() + quadratic model, as visualisation suggest rughly a quadratic relationship between age and adoption rate. I do not have that much experience with the combination of these, and while I know how to construct a model, I am a bit reserved about the visualizations (still feasible) and model interpretation. I am thinking to use grouping / binning for `Age` and use corresponding categories for different animal types. Binning a continuous variable into groups leads to a loss of statistical power. This is because binning reduces the amount of information available for analysis by grouping continuous values into discrete categories, making it harder to detect subtle but real relationships between variables. Though I still believe at this point, for a solo UNI assignment, where I do not have collaborators to work together on result/model interpretation etc. I think I can do my work better with grouped variable. 
-
+Huh, alright. At this point I have to decide how to continue with this variable. I see two options - one is log() + quadratic model, as visualization suggest roughly a quadratic relationship between age and adoption rate. I do not have that much experience with the combination of these, and while I know how to construct a model, I am a bit reserved about the visualizations (still feasible) and model interpretation. I am thinking to use grouping / binning for `Age`. Binning a continuous variable into groups leads to a loss of statistical power. This is because binning reduces the amount of information available for analysis by grouping continuous values into discrete categories, making it harder to detect subtle but real relationships between variables. Though I still believe at this point, for a solo UNI assignment, where I do not have collaborators to work together on result/model interpretation etc. I think I can do my work better with grouped variable.
 
 # Logistic regression models
 
-In this analysis I aim to investigate whether contextual factors—such as the condition in which the animal was taken in and whether it was sterilised—can significantly improve the prediction of adoption outcomes, compared to a model that includes only animal-focused characteristics.
+In this analysis I aim to investigate whether contextual/interventional factors, such as the condition in which the animal was taken in and whether it was sterilised, can significantly improve the prediction of adoption outcomes, compared to a model that includes only animal-focused (biological) characteristics.
 
-**Research Question:**
-Does the inclusion of contextual variables improve model fit in predicting whether an animal gets adopted?
+**Research Question:** Does the inclusion of contextual variables improve model fit in predicting whether an animal gets adopted?
 
-**Hypothesis:**
-Based on preliminary exploratory analysis, I hypothesise that contextual factors will significantly improve the model’s predictive performance over a baseline model that includes only animal-level variables.
+**Hypothesis:** Based on preliminary exploratory analysis, I hypothesise that contextual factors will significantly improve the model’s predictive performance over a baseline model that includes only animal-level variables.
 
 **Data Description:**
 
@@ -1063,32 +1042,33 @@ The outcome variable is Adoption (1 = adopted, 0 = not adopted).
 
 I restricted the dataset to cats and dogs, excluding other animal types such as birds, exotic, and wildilfe animals, and small mammals due to insufficient sample sizes and for practical reasons that dogs and cats are usually most prevalent animal types in shelters and are most commonly adopted animal types. This narrows the investigation and focuses on specific groups and their adoption rates.
 
-**SIMPLE MODEL **
+**SIMPLE MODEL**
 
 In the simple model, I will focus on animal-related, native, given factors, which do not depend on contextual factors or interventions. They include:
 
-- Animal Type (cat or dog)
-- Sex (male or female)
-- Age, categorized into five bins reflecting developmental stages:
+-   Animal Type (cat or dog)
 
-  -Junior (0–1 year),
-  -Young Adult (1–6 years for cats, up to 2 years for dogs),
-  -Mature Adult (7–10 years for cats, 3–6 years for dogs),
-  -Senior (10+ for cats, 7–11 years for dogs),
-  -Geriatric (older then previous levels; in both categories).
+-   Sex (male or female)
+
+-   Age, categorized into five bins reflecting developmental stages:
+
+    -   Junior (0–1 year),
+    -   Young Adult (1–6 years for cats, up to 2 years for dogs),
+    -   Mature Adult (7–10 years for cats, 3–6 years for dogs),
+    -   Senior (10+ for cats, 7–11 years for dogs),
+    -   Geriatric (older then previous levels; in both categories).
 
 This categorization reflects species-specific aging and was used to simplify interpretation and ensure comparability across species. Categorization was based on scientific guidelines for age categorization (Harvey, 2021; Quimby et al., 2021).
 
-**COMPLEX MODEL**
-In the complex model I will add so called contextual predictors, which are situational or depend on interventions. They will include:
+**COMPLEX MODEL** In the complex model I will add so called contextual predictors, which are situational or depend on interventions. They will include:
 
-- Intake condition, reduced to five categories (normal, under age/weight, mild physical, moderate physical, severe physical). *Less frequent or poorly defined were excluded due to small sample sizes and lack of sufficient context for interpretation.*
-- Sterilized status (1 = yes, 0 = no)
-
+-   Intake condition, reduced to five categories (normal, under age/weight, mild physical, moderate physical, severe physical). *Less frequent or poorly defined were excluded due to small sample sizes and lack of sufficient context for interpretation.*
+-   Sterilized status (1 = yes, 0 = no)
 
 These variables were selected based on theoretical relevance, availability, and data quality. The regression analysis compares a baseline model including only animal-level variables to a complex model that incorporates contextual predictors.
 
 ## Final dataset preparation
+
 ```{r}
 lb_analysis <- longbeach %>%
   # Use only cats and dogs
@@ -1127,45 +1107,49 @@ lb_analysis <- longbeach %>%
   select(animal_id, animal_type, sex, age_bins, intake_condition, sterilised, adopted) 
 ```
 
-
-
 ## Simple model (animal related, native factors)
 
 ### Construct the model
+
 ```{r}
 lb_simple_mdl <- glm(adopted ~ animal_type + sex + age_bins, 
                   data = lb_analysis, family = binomial)
 ```
 
-
 Check model summary:
+
 ```{r}
 summary(lb_simple_mdl)
 ```
 
-
 ### Visualize the model
+
 ```{r}
 plot_model(lb_simple_mdl, type = "pred", terms = c("age_bins", "animal_type")) + theme_minimal() + labs(x = "Age bins", y = "Adopted", title = "Predicted probabilities of adoption for dogs and cats, separated by age bins", color = "Animal type")
 ```
 
 ### Checking assumptions
+
 ```{r}
 check_model(lb_simple_mdl)
 ```
+
 **Check residuals:**
 
 Not mandatory for logistic regression, but anyways.
+
 ```{r}
 check_residuals(lb_simple_mdl)
 ```
 
 **Multicollinearity:**
+
 ```{r}
 check_collinearity(lb_simple_mdl)
 ```
 
 **Influential points:**
+
 ```{r}
 # Leverage
 n_obs = nrow(lb_analysis)
@@ -1207,18 +1191,18 @@ lb_analysis %>%
 # We see that basically all the influential points from "geriatric" and "senior" are datapoints that are also "adopted". More on this topic in the text below. 
 ```
 
-Cook’s distance analysis revealed influential observations (n = 523) concentrated among adopted senior (n=336/1,802 total seniors) and geriatric (n=67/586 total geriatrics) animals. Notably, these points accounted for all adoptions in their age groups—when hypothetically excluded, the model would lose its ability to estimate adoption effects for senior/geriatric animals entirely. To address this,I will try one solution: merge senior and geriatric categories into an "Older" group and re-analyse the model to see what happens. 
-
+Cook’s distance analysis revealed influential observations (n = 523) concentrated among adopted senior (n=336/1,802 total seniors) and geriatric (n=67/586 total geriatrics) animals. Notably, these points accounted for all adoptions in their age groups—when hypothetically excluded, the model would lose its ability to estimate adoption effects for senior/geriatric animals entirely. To address this,I will try one solution: merge senior and geriatric categories into an "Older" group and re-analyse the model to see what happens.
 
 ### Assessing model fit
 
 #### Preudo R-squared
+
 ```{r}
 model_performance(lb_simple_mdl)   # Focusing on Tjur's R2
 ```
 
-
 #### ROC and AUC
+
 ```{r}
 # Get predicted probabilities
 pred_probs_simple_mdl <- predict(lb_simple_mdl, type = "response")
@@ -1229,13 +1213,14 @@ plot(roc_curve_simple_mdl)  # Visualize
 auc(roc_curve_simple_mdl)   
 ```
 
-Extract threshold 
+Extract threshold
+
 ```{r}
 lb_simple_mdl_thresh <- coords(roc_curve_simple_mdl, "best", ret = "threshold")
 ```
 
-
 #### Confusion matrix for determining accuracy
+
 ```{r}
 lb_simple_mdl_pred_binary <- ifelse(pred_probs_simple_mdl > lb_simple_mdl_thresh[[1]], "Yes", "No")
 
@@ -1246,8 +1231,8 @@ lb_analysis <- lb_analysis %>%
 lb_simple_mdl_conf_matrix <- confusionMatrix(factor(lb_simple_mdl_pred_binary), factor(lb_analysis$adopted_str))
 ```
 
-
 #### All model fit indices:
+
 ```{r}
 # Extract variables
 lb_simple_mdl_pseudo_r2 <- round(model_performance(lb_simple_mdl)[[4]], 4)
@@ -1262,26 +1247,22 @@ cat("Simple model - Model Fit Summary:\n",
     sprintf("Accuracy: %.3f\n", lb_simple_mdl_accuracy))
 ```
 
-
-
-
 ### Summary of the simple model
 
 Important things to point out:
 
-- **Model summary:** The basic logistic regression showed dogs had significantly higher adoption odds than cats (β=0.168, p<0.001), while sex had no significant effect. All older age categories showed progressively lower adoption odds compared to juveniles, with the strongest negative effects for geriatric animals (β=-1.393, p<0.001).
+-   **Model summary:** The basic logistic regression showed dogs had significantly higher adoption odds than cats (β=0.168, p\<0.001), while sex had no significant effect. All older age categories showed progressively lower adoption odds compared to juveniles, with the strongest negative effects for geriatric animals (β=-1.393, p\<0.001).
 
-- **Model diagnostics:** Residual diagnostics indicated good fit (uniform distribution, p=0.908) with no multicollinearity concerns (all VIFs <1.63). Cook's distance identified 523 influential points, all representing adopted senior/geriatric animals. These constituted 100% of adopted cases in these age groups, thus age effects estimates were entirely dependent on these observations. This suggested to collapse the groups rather than eliminate the influential points completely.
+-   **Model diagnostics:** Residual diagnostics indicated good fit (uniform distribution, p=0.908) with no multicollinearity concerns (all VIFs \<1.63). Cook's distance identified 523 influential points, all representing adopted senior/geriatric animals. These constituted 100% of adopted cases in these age groups, thus age effects estimates were entirely dependent on these observations. This suggested to collapse the groups rather than eliminate the influential points completely.
 
-**Fit indices:** The model showed poor predictive performance with McFadden's R²=0.012 and AUC=0.563 and classification accuracy of 52.1%, barely better than chance. 
+**Fit indices:** The model showed poor predictive performance with McFadden's R²=0.012 and AUC=0.563 and classification accuracy of 52.1%, barely better than chance.
 
-**Next steps:** To address the influential points issue and improve model stability, I will merge senior and geriatric categories into a combined "Older" group and refit the model. I will repeat the same model analysis as in the case of this, first model. 
-
-
+**Next steps:** To address the influential points issue and improve model stability, I will merge senior and geriatric categories into a combined "Older" group and refit the model. I will repeat the same model analysis as in the case of this, first model.
 
 ## Updated simple model (merging "geriatric" and "senior" age bins)
 
 Merge levels:
+
 ```{r}
 lb_analysis_merged_age <- lb_analysis %>%
   mutate(age_bins = fct_collapse(age_bins, "Older" = c("Senior", "Geriatric")))
@@ -1291,22 +1272,23 @@ lb_analysis_merged_age %>%
 ```
 
 ### Construct new model
+
 ```{r}
 lb_simple_merged_mdl <- glm(adopted ~ animal_type + sex + age_bins, 
                   data = lb_analysis_merged_age, family = binomial)
 ```
 
 Check model summary:
+
 ```{r}
 summary(lb_simple_merged_mdl)
 ```
 
-
 ### Visualize the model
+
 ```{r}
 plot_model(lb_simple_merged_mdl, type = "pred", terms = c("age_bins", "animal_type")) + theme_minimal() + labs(x = "Age bins", y = "Adopted", title = "Predicted probabilities of adoption for dogs and cats, separated by age bins", color = "Animal type")
 ```
-
 
 ### Checking assumptions
 
@@ -1315,11 +1297,13 @@ check_model(lb_simple_merged_mdl)
 ```
 
 **Multicolinearity:**
+
 ```{r}
 check_collinearity(lb_simple_merged_mdl)
 ```
 
 **Influential points:**
+
 ```{r}
 # Leverage
 n_obs_2 = nrow(lb_analysis_merged_age)
@@ -1346,9 +1330,9 @@ plot(lb_simple_merged_mdl, 4)
 
 **Check residuals**
 
-Here is where I ran into a bit of confusion that will probably take me some time to figure out, probably more time is needed than the deadline for the report. I was checking residuals in 2 ways, one with `check_residuals` and another with `binned residuals` (see both below). 
+Here is where I ran into a bit of confusion that will probably take me some time to figure out, probably more time is needed than the deadline for the report. I was checking residuals in 2 ways, one with `check_residuals` and another with `binned residuals` (see both below).
 
-Initial checks with check_residuals() indicated no major violations of model assumptions (quantile residuals followed expected uniform distribution, however this is NOT a requirement in any case, at least to my current knowledge). However, the binned residuals plot (binned_residuals()) showed poor fit, with only 31% of residuals within error bounds—suggesting localized prediction inaccuracies for certain subgroups. While tools like DHARMa (simulated residuals) were explored, the results (a gray-shaded plot with a straight red line) proved difficult to interpret given time constraints and my limited familiarity with advanced diagnostics. At this point I am not sure how to deal with this problem, so I think I will continue and be careful about interpretation of model results later on. 
+Initial checks with check_residuals() indicated no major violations of model assumptions (quantile residuals followed expected uniform distribution, however this is NOT a requirement in any case, at least to my current knowledge). However, the binned residuals plot (binned_residuals()) showed poor fit, with only 31% of residuals within error bounds—suggesting localized prediction inaccuracies for certain subgroups. While tools like DHARMa (simulated residuals) were explored, the results (a gray-shaded plot with a straight red line) proved difficult to interpret given time constraints and my limited familiarity with advanced diagnostics. At this point I am not sure how to deal with this problem, so I think I will continue and be careful about interpretation of model results later on.
 
 ```{r}
 check_residuals(lb_simple_merged_mdl)
@@ -1361,12 +1345,13 @@ plot(simulated_residuals_simple_merged_mdl)
 ### Assessing model fit
 
 #### Preudo R-squared
+
 ```{r}
 model_performance(lb_simple_merged_mdl)   # Focusing on Tjur's R2
 ```
 
-
 #### ROC and AUC
+
 ```{r}
 # Get predicted probabilities
 pred_probs_simple_merged_mdl <- predict(lb_simple_merged_mdl, type = "response")
@@ -1377,13 +1362,14 @@ plot(roc_curve_simple_merged_mdl)  # Visualize
 auc(roc_curve_simple_merged_mdl)   
 ```
 
-Extract threshold 
+Extract threshold
+
 ```{r}
 lb_simple_merged_mdl_thresh <- coords(roc_curve_simple_merged_mdl, "best", ret = "threshold")
 ```
 
-
 #### Confusion matrix for determining accuracy
+
 ```{r}
 lb_simple_merged_mdl_pred_binary <- ifelse(pred_probs_simple_merged_mdl > lb_simple_merged_mdl_thresh[[1]], "Yes", "No")
 
@@ -1394,8 +1380,8 @@ lb_analysis_merged_age <- lb_analysis_merged_age %>%
 lb_simple_merged_mdl_conf_matrix <- confusionMatrix(factor(lb_simple_merged_mdl_pred_binary), factor(lb_analysis_merged_age$adopted_str))
 ```
 
-
 #### All model fit indices:
+
 ```{r}
 # Extract variables
 lb_simple_merged_mdl_pseudo_r2 <- round(model_performance(lb_simple_merged_mdl)[[4]], 4)
@@ -1414,49 +1400,51 @@ cat("Simple model (updated - grouped age bins) - Model Fit Summary:\n",
 
 Important thing to point out before proceeding to the complex model:
 
-- **Model summary:** The merged model (combining senior/geriatric into "Older") maintained the same significant predictors as the original: dogs showed higher adoption odds compared to cats (β=0.171 vs initial 0.168, p<0.001) while sex remained non-significant. The combined "Older" coefficient (β=-0.950) represents an "intermediate effect" between the original separate estimates for senior (β=-0.829) and geriatric (β=-1.393), so we can assume that merging age bins preserved the overall age trend.
+-   **Model summary:** The merged model (combining senior/geriatric into "Older") maintained the same significant predictors as the original: dogs showed higher adoption odds compared to cats (β=0.171 vs initial 0.168, p\<0.001) while sex remained non-significant. The combined "Older" coefficient (β=-0.950) represents an "intermediate effect" between the original separate estimates for senior (β=-0.829) and geriatric (β=-1.393), so we can assume that merging age bins preserved the overall age trend.
 
-- **Model diagnostics:** Multicollinearity remained low (VIFs<1.63). The merged model showed improvement in influential points: maximum Cook's distance decreased 75% (0.002→0.0005), though 523 points still exceeded the 4/n threshold and 0 influential points were identified according to D > 1 threshold. Residual diagnostics were consistent between models - quatile residuals sugegst model structure adequacy (p>0.9) but localized misfit in binned residuals (only 31% within bounds), suggesting the problem with specific subgroups despite the age bin merging.
+-   **Model diagnostics:** Multicollinearity remained low (VIFs\<1.63). The merged model showed improvement in influential points: maximum Cook's distance decreased 75% (0.002→0.0005), though 523 points still exceeded the 4/n threshold and 0 influential points were identified according to D \> 1 threshold. Residual diagnostics were consistent between models - quatile residuals sugegst model structure adequacy (p\>0.9) but localized misfit in binned residuals (only 31% within bounds), suggesting the problem with specific subgroups despite the age bin merging.
 
-- **Fit Indices Comparison:** No meaningful differences emerged in model performance:, identical McFadden's R² (0.012), identical AUC (0.563), identical accuracy (52.1%).
+-   **Fit Indices Comparison:** No meaningful differences emerged in model performance:, identical McFadden's R² (0.012), identical AUC (0.563), identical accuracy (52.1%).
 
 This suggests the age bin merging addressed concerns about influential points without improving predictive power. Let's now continue to the complex model, where contextual factors, namely **sterilization status and intake condition** will be added.
 
+## Complex model - added contextual predictors
 
-## Complex model - added contextual predictors 
+As mentioned several times before, while the simple model only considered animal-centered, native predictors like age, sex and type (dog vs. cat), we will introduce contextual predictors (sterilization status and intake condition) to the more complex model and investigate whether these predictors significantly improve model fit and predictive power - determining whether animal gets adopted or not. We will use the dataset with merged age bins for geriatric and senior.
 
-As mentioned several times before, while the simple model only considered animal-centered, native predictors like age, sex and type (dog vs. cat), we will introduce contextual predictors (sterilization status and intake condition) to the more complex model and investigate whether these predictors significantly improve model fit and predictive power - determining whether animal gets adopted or not. We will use the dataset with merged age bins for geriatric and senior. 
+### Construct the model
 
-### Construct the model 
 ```{r}
 lb_complex_mdl <- glm(adopted ~ animal_type + sex + age_bins + sterilised + intake_condition, data = lb_analysis_merged_age, family = binomial)
 ```
 
 Check model summary:
+
 ```{r}
 summary(lb_complex_mdl)
 ```
 
-
 ### Visualize the model
 
 Visualization of 4 variables.
+
 ```{r}
 plot_model(lb_complex_mdl, type = "pred", terms = c("animal_type", "intake_condition", "age_bins", "sterilised")) + 
   theme_minimal() + 
   labs(x = NULL, y = "Adopted", title = "Predicted probabilities of adoption for dogs and cats, \nseparated by age, sterilization status and intake condition.", color = "Intake condition")
 ```
-We can see a significant difference between sterilized and non-sterilized panels, with much higher adoption probabilities for sterilized animals. 
+
+We can see a significant difference between sterilized and non-sterilized panels, with much higher adoption probabilities for sterilized animals.
 
 Let's now visualize only sterilized animals.
+
 ```{r}
 plot_model(lb_complex_mdl, type = "pred", terms = c("animal_type", "intake_condition", "age_bins", "sterilised [Yes]")) + 
   theme_minimal() + 
   labs(x = NULL, y = "Adopted", title = "Predicted probabilities of adoption for dogs and cats, \nseparated by age, sterilization status and intake condition.", color = "Intake condition")
 ```
-From this graph we can identify the decrease in adoption rate for both dogs and cats across different age groups. Importantly, in all cases we see that severe physical condition (purple) has a noticeably lower adoption rate across all age groups for both animal types. While the model coefficients suggest significantly higher adoption rate of dogs compared to cats (β = 0.30594), this is less identifiable from the plot itself. 
 
-
+From this graph we can identify the decrease in adoption rate for both dogs and cats across different age groups. Importantly, in all cases we see that severe physical condition (purple) has a noticeably lower adoption rate across all age groups for both animal types. While the model coefficients suggest significantly higher adoption rate of dogs compared to cats (β = 0.30594), this is less identifiable from the plot itself.
 
 ### Checking assumptions
 
@@ -1465,11 +1453,13 @@ check_model(lb_complex_mdl)
 ```
 
 **Multicolinearity:**
+
 ```{r}
 check_collinearity(lb_complex_mdl)
 ```
 
 **Influential points:**
+
 ```{r}
 # Leverage
 n_obs_3 = nrow(lb_analysis_merged_age)
@@ -1509,12 +1499,12 @@ lb_analysis_merged_age %>%
   filter(influential_cd_3) %>%
   count(sterilised)
 ```
-I do not identify any specific points that would really stand out from others. If we would decide to remove influential points according to leverage and Cooks'd distance, almost 5% of data should be remove, which would possibly lead to overfitting of the model. I decide to continue with the whole dataset, as from a contextual point of view all datapoints are biologically and contextually plausible. When checking distribution of influential points with respect to predictors, they are approximatelly equally distributed across levels of age bins, intake condition and sterilization status.
 
+I do not identify any specific points that would really stand out from others. If we would decide to remove influential points according to leverage and Cooks'd distance, almost 5% of data should be remove, which would possibly lead to overfitting of the model. I decide to continue with the whole dataset, as from a contextual point of view all datapoints are biologically and contextually plausible. When checking distribution of influential points with respect to predictors, they are approximatelly equally distributed across levels of age bins, intake condition and sterilization status.
 
 **Check residuals**
 
-I have a similar issue as before. While simulated residuals appear as uniformly distributed (`check_residuals` -> p = 0.619) (not a necessary condition in logistic regression), binned residuals suggest localized misfit (only 28% within the error bounds), indicating the problem with specific subgroups. I am assuming this pattern suggests that while the model’s overall framework is appropriate, it fails to capture nuanced relationships for specific predictor combinations, and probably stem from rarer outcomes (adoptions) in specific subgroups. Possibly, they might be resolved by introducing interaction terms. As explained in the previous section, my current knowledge is not sufficient to decide what actions should be taken to resolve this issue, or how relevant this is in the first place, so I will continue with the analysis as is. 
+I have a similar issue as before. While simulated residuals appear as uniformly distributed (`check_residuals` -\> p = 0.619) (not a necessary condition in logistic regression), binned residuals suggest localized misfit (only 28% within the error bounds), indicating the problem with specific subgroups. I am assuming this pattern suggests that while the model’s overall framework is appropriate, it fails to capture nuanced relationships for specific predictor combinations, and probably stem from rarer outcomes (adoptions) in specific subgroups. Possibly, they might be resolved by introducing interaction terms. As explained in the previous section, my current knowledge is not sufficient to decide what actions should be taken to resolve this issue, or how relevant this is in the first place, so I will continue with the analysis as is.
 
 ```{r}
 check_residuals(lb_complex_mdl)
@@ -1524,16 +1514,16 @@ simulated_residuals_complex_mdl <- simulateResiduals(lb_complex_mdl)
 plot(simulated_residuals_complex_mdl)
 ```
 
-
 ### Assessing model fit
 
 #### Preudo R-squared
+
 ```{r}
 model_performance(lb_complex_mdl)   # Focusing on Tjur's R2
 ```
 
-
 #### ROC and AUC
+
 ```{r}
 # Get predicted probabilities
 pred_probs_complex_mdl <- predict(lb_complex_mdl, type = "response")
@@ -1544,21 +1534,22 @@ plot(roc_curve_complex_mdl)
 auc(roc_curve_complex_mdl)   
 ```
 
-Extract threshold 
+Extract threshold
+
 ```{r}
 lb_complex_mdl_thresh <- coords(roc_curve_complex_mdl, "best", ret = "threshold")
 ```
 
-
 #### Confusion matrix for determining accuracy
+
 ```{r}
 lb_complex_mdl_pred_binary <- ifelse(pred_probs_complex_mdl > lb_complex_mdl_thresh [[1]], "Yes", "No")
 
 lb_complex_mdl_conf_matrix <- confusionMatrix(factor(lb_complex_mdl_pred_binary), factor(lb_analysis_merged_age$adopted_str))
 ```
 
-
 #### All model fit indices:
+
 ```{r}
 # Extract variables
 lb_complex_mdl_pseudo_r2 <- round(model_performance(lb_complex_mdl)[[4]], 4)
@@ -1577,24 +1568,25 @@ cat("Complex model - Model Fit Summary:\n",
 
 Important things to point out, before proceeding to formal model comparison:
 
-- **Model summary:** The complex model shows sterilization status as the strongest predictor of adoption (β=2.69, p<0.001), followed by age effects, where older animals had substantially lower odds (β=-1.97, p<0.001) - the lowest of all age groups. Dogs showed higher adoption rate than cats (β=0.31, p<0.001). Severe physical conditions negatively impacted adoption (β=-0.83, p<0.001), most severely of all condition. Importantly, there was no significant difference between reference group (Normal condition) and mild physical condition. 
+-   **Model summary:** The complex model shows sterilization status as the strongest predictor of adoption (β=2.69, p\<0.001), followed by age effects, where older animals had substantially lower odds (β=-1.97, p\<0.001) - the lowest of all age groups. Dogs showed higher adoption rate than cats (β=0.31, p\<0.001). Severe physical conditions negatively impacted adoption (β=-0.83, p\<0.001), most severely of all condition. Importantly, there was no significant difference between reference group (Normal condition) and mild physical condition.
 
-- **Model Diagnostics:** Multicollinearity remains low (all VIFs <2.21). While formal thresholds identified many influential points (1,826 by leverage, 1,002 by Cook's distance), visual inspection showed no extreme outliers. These points were evenly distributed across predictor categories, suggesting they represent natural data variation. Residual diagnostics showed good global fit (uniform quantile residuals, p=0.619) but localized misfit in binned residuals (28% within bounds), possibly due to unmodeled interactions and/or low rate of adoption outcomes in smaller subgroups subgroups.
+-   **Model Diagnostics:** Multicollinearity remains low (all VIFs \<2.21). While formal thresholds identified many influential points (1,826 by leverage, 1,002 by Cook's distance), visual inspection showed no extreme outliers. These points were evenly distributed across predictor categories, suggesting they represent natural data variation. Residual diagnostics showed good global fit (uniform quantile residuals, p=0.619) but localized misfit in binned residuals (28% within bounds), possibly due to unmodeled interactions and/or low rate of adoption outcomes in smaller subgroups subgroups.
 
-- **Fit Indices:** The model demonstrates good predictive performance: McFadden's pseudo R2 was 0.288 (substantial improvement over null model); AUC: 0.820 (excellent discrimination); accuracy: 0.777 (significantly better than no-information rate 0.717, p<0.001). 
+-   **Fit Indices:** The model demonstrates good predictive performance: McFadden's pseudo R2 was 0.288 (substantial improvement over null model); AUC: 0.820 (excellent discrimination); accuracy: 0.777 (significantly better than no-information rate 0.717, p\<0.001).
 
-While it is already becoming clear that there is a significant improvement in predictive power of the more complex model compared to a simple model, let's perform formal model comparison. 
-
+While it is already becoming clear that there is a significant improvement in predictive power of the more complex model compared to a simple model, let's perform formal model comparison.
 
 ## Model comparisons
 
 Likelihood ratio test:
+
 ```{r}
 lrt_test <- anova(lb_simple_merged_mdl, lb_complex_mdl)
 lrt_test
 ```
 
-Other indices: 
+Other indices:
+
 ```{r}
 compare_performance(lb_simple_merged_mdl, lb_complex_mdl, rank = TRUE, verbose = TRUE)
 
@@ -1624,16 +1616,16 @@ model_comparison %>%
                      "AUC: Values >0.8 suggest excellent discrimination"))
 ```
 
-### Reporting model comparison 
+### Reporting model comparison
 
-The complex model demonstrated substantially better performance across all metrics compared to the simple model. A likelihood ratio test confirmed the complex model's superior fit (χ²=5553.31, p<.001), with the additional predictors explaining 27.6% more variance (pseudo R²=0.288 vs 0.012). This improvement was reflected in the AIC reduction from 23,371 to 17,828, strongly favoring the complex model. Predictive performance also improved markedly, with AUC increasing from 0.563 (poor discrimination) to 0.820 (excellent discrimination), while accuracy rose from 52.1% to 77.7%. These results suggest that including sterilization status and intake condition alongside the basic predictors (animal type, sex, and age bins) provides a far more complete understanding of adoption patterns.
-
+The complex model demonstrated substantially better performance across all metrics compared to the simple model. A likelihood ratio test confirmed the complex model's superior fit (χ²=5553.31, p\<.001), with the additional predictors explaining 27.6% more variance (pseudo R²=0.288 vs 0.012). This improvement was reflected in the AIC reduction from 23,371 to 17,828, strongly favoring the complex model. Predictive performance also improved markedly, with AUC increasing from 0.563 (poor discrimination) to 0.820 (excellent discrimination), while accuracy rose from 52.1% to 77.7%. These results suggest that including sterilization status and intake condition alongside the basic predictors (animal type, sex, and age bins) provides a far more complete understanding of adoption patterns.
 
 ## Final model summaries
 
 Final model estimates report will be provided here. So far I only inspected each model with `summary()` function, but let us now create a nice, comprehensive table and discuss the results of the models.
 
 Log-odds:
+
 ```{r}
 tab_model(lb_simple_merged_mdl,lb_complex_mdl,
           show.est = TRUE,
@@ -1658,6 +1650,7 @@ tab_model(lb_simple_merged_mdl,lb_complex_mdl,
 ```
 
 Odds-ratios:
+
 ```{r}
 tab_model(lb_simple_merged_mdl,lb_complex_mdl,
           show.stat = TRUE,
@@ -1685,27 +1678,18 @@ All in all, present analysis reveals an interesting hierarchy of factors contrib
 
 Age exhibits a strong, gradual negative relationship with adoption likelihood, where older animals face vastly lower adoption rates - they have just 14% of the adoption odds of junior animals, while young and mature adults show intermediate but still reduced odds (36-37% of juveniles).
 
-Dogs show a moderate 36% advantage over cats in adoption odds. 
+Dogs show a moderate 36% advantage over cats in adoption odds.
 
-Health conditions exhibited important differenecs: animals with severe medical issues experience less than half the adoption odds (44%) of normal/healthy animals, while those with moderate conditions or being under age/weight show smaller but significant reductions (20% and 19% lower odds respectively). Mild conditions, interestingly, show no statistically different effect on adoption rates. 
-
-
+Health conditions exhibited important differenecs: animals with severe medical issues experience less than half the adoption odds (44%) of normal/healthy animals, while those with moderate conditions or being under age/weight show smaller but significant reductions (20% and 19% lower odds respectively). Mild conditions, interestingly, show no statistically different effect on adoption rates.
 
 # Final discussion
 
-If we consider initially formulated research question and hypothesis, this analysis revealed interesting findings. I aimed to determine whether contextual/intervention factors like sterilization status and intake condition could enhance predictions of animal adoption beyond basic biological traits, and the results provide support for this hypothesis. The complex model, incorporating these additional variables, demonstrated a significant improvement over the simple model, evidenced by a 27.6% increase in explained variance (Tjur’s R2: 0.012 → 0.288), a significant likelihood ratio test (χ²=5553.31, p<0.001), and a leap in predictive/descriminative power from poor to excellent (AUC: 0.56 → 0.82). 
+If we consider initially formulated research question and hypothesis, this analysis revealed interesting findings. I aimed to determine whether contextual/intervention factors like sterilization status and intake condition could enhance predictions of animal adoption beyond basic biological traits, and the results provide support for this hypothesis. The complex model, incorporating these additional variables, demonstrated a significant improvement over the simple model, evidenced by a 27.6% increase in explained variance (Tjur’s R2: 0.012 → 0.288), a significant likelihood ratio test (χ²=5553.31, p\<0.001), and a leap in predictive/descriminative power from poor to excellent (AUC: 0.56 → 0.82).
 
-Sterilization emerged as the most important predictor, with sterilized animals experiencing a 14.7-fold increase in adoption odds. Health conditions further impacted outcomes, as severe physical ailments halved adoption odds (OR=0.44), while mild conditions had no detectable effect, suggesting adopters weigh major health concerns more heavily than minor ones. Significant age gradient was observed in complex model (as well as simple model), with older animals facing adoption deficits (OR=0.14 vs. juniors), underscoring the need for targeted interventions for this vulnerable group. 
+Sterilization emerged as the most important predictor, with sterilized animals experiencing a 14.7-fold increase in adoption odds. Health conditions further impacted outcomes, as severe physical ailments halved adoption odds (OR=0.44), while mild conditions had no detectable effect, suggesting adopters weigh major health concerns more heavily than minor ones. Significant age gradient was observed in complex model (as well as simple model), with older animals facing adoption deficits (OR=0.14 vs. juniors), underscoring the need for targeted interventions for this vulnerable group.
 
-While the model’s overall performance is strong, the binned residuals’ localized misfit (28% within bounds) hints at unresolved nuances, possibly from unmodeled interactions or other, unfeatured variables. However, as mentioned several times throughout this document, my current knowledge and understanding of statistical methods did not allow me to address and investigate this issue further at this present moment. 
+While the model’s overall performance is strong, the binned residuals’ localized misfit (28% within bounds) hints at unresolved nuances, possibly from unmodeled interactions or other, unfeatured variables. However, as mentioned several times throughout this document, my current knowledge and understanding of statistical methods did not allow me to address and investigate this issue further at this present moment.
 
-It is highly important to emphasize, that only a few specific predictors were selected from the dataset and that featuring others might lead to further model fit improvement and predictive power. Such are for example color of the animal, but I decided to leave it out as it seems a highly subjective and consequently unsystematic factor. Additionally, I considered introducing intake condition, but our EDA revealed highly condensed data in the "stray" category, compared to others and based on this imbalance I decided to not feature it in the analysis. Even beyond this dataset, there are probably other factors, which greatly influence decision to adopt, but might be hard to determine quantitatively - a very frequent report (anecdotal) is that a person simply "knows" which animal to pick, as if they have some immediate connection, which is probably very difficult to explain verbally and potentially be categorized as a predictive variable. 
+It is highly important to emphasize, that only a few specific predictors were selected from the dataset and that featuring others might lead to further model fit improvement and predictive power. Such are for example color of the animal, but I decided to leave it out as it seems a highly subjective and consequently unsystematic factor. Additionally, I considered introducing intake condition, but our EDA revealed highly condensed data in the "stray" category, compared to others and based on this imbalance I decided to not feature it in the analysis. Even beyond this dataset, there are probably other factors, which greatly influence decision to adopt, but might be hard to determine quantitatively - a very frequent report (anecdotal) is that a person simply "knows" which animal to pick, as if they have some immediate connection, which is probably very difficult to explain verbally and potentially be categorized as a predictive variable.
 
-To conclude, these findings collectively argue that shelters should prioritize sterilization programs as they seem to be significantly improving adoption outcomes. 
-
-
-
-
-
-
-
+To conclude, these findings collectively argue that shelters should prioritize sterilization programs as they seem to be significantly improving adoption outcomes.
